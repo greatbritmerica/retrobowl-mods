@@ -11,11 +11,11 @@
 #include "input.h"
 #include "cpuqb.h"
 
-#define THROW_K      0.1159     // ball speed per pixel of drag
+#define THROW_K      0.1159     // fallback ball speed per pixel of drag (a strong arm)
 #define DRAG_DECAY   0.986
 #define AIR_K        8.75       // frames of flight per unit of speed
 #define DRAG_MIN     24.0
-#define DRAG_MAX     115.0
+#define DRAG_MAX     140.0
 #define P0X          400.0      // where the finger goes down (GUI)
 #define P0Y          190.0
 
@@ -35,7 +35,11 @@ static struct {
     int nof, ndf;
     int tgt;                       // index into of[]
     double aim_x, aim_y, drag;
+    double k, mtp;                // this QB: ball speed per pixel of drag, his my_throw_power
+    int measured;
 } Q;
+
+static double g_k_per_mtp;       // speed-per-drag / my_throw_power, measured from a real throw
 
 static double frand(void) { return arc4random_uniform(10000) / 10000.0; }
 
@@ -133,7 +137,7 @@ static int pick_receiver(double *score_out, double *open_out) {
         if (depth > -22 && depth < 22 && spd < 1.6) continue;   // linemen: on the line and slow
         double lx, ly, v;
         lead_point(i, &lx, &ly, &v);
-        if (v / THROW_K > DRAG_MAX) continue;               // out of range
+        if (v / Q.k > DRAG_MAX) continue;                   // out of range
         double T = AIR_K * v;
         double open = nearest_def(lx, ly, T * 0.7);
         double gain = (lx - Q.los_x) * Q.fwd;
@@ -192,6 +196,13 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
 
     if (!Q.fwd) {                                              // first frame with a QB: orient
         if (!Q.qb) return;
+        Q.mtp = rb_get_inst_real(Q.qb, SLOT_MY_THROW_POWER);
+        if (g_k_per_mtp > 0 && Q.mtp > 0) Q.k = Q.mtp * g_k_per_mtp;
+        else if (Q.mtp > 0) {
+            Q.k = Q.mtp * 1.2;                                  // velocity = drag * my_throw_power (x or / 1.2)
+            if (Q.k > 0.2 || Q.k < 0.04) Q.k = Q.mtp / 1.2;
+        }
+        if (!(Q.k > 0.03 && Q.k < 0.3)) Q.k = THROW_K;
         double sx = 0; int n = 0;
         for (int i = 0; i < Q.ndf; i++) if (Q.df[i].seen) { sx += Q.df[i].x; n++; }
         if (!n) return;
@@ -206,8 +217,8 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         if (Q.down >= 3 && Q.yards >= 4) p_run = 0.10;
         Q.is_run = frand() < p_run;
         Q.deep = !Q.is_run && frand() < 0.18;
-        rb_log("cpuqb: new play, down %g yards %g (x_yards %g), los %.0f fwd %+.0f, %s%s", Q.down, Q.yards,
-               rb_get_obj_real(OBJ_CONTROLLER, SLOT_X_YARDS), Q.los_x, Q.fwd,
+        rb_log("cpuqb: new play, down %g yards %g (x_yards %g), los %.0f fwd %+.0f, arm %.4f -> k %.4f, %s%s",
+               Q.down, Q.yards, rb_get_obj_real(OBJ_CONTROLLER, SLOT_X_YARDS), Q.los_x, Q.fwd, Q.mtp, Q.k,
                Q.is_run ? "RUN" : "PASS", Q.deep ? " (deep shot)" : "");
     }
 
@@ -290,7 +301,7 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         else { lx = Q.qbx + Q.fwd * 420; ly = Q.qby + (Q.qby < 300 ? -260 : 260); v = 9; }   // sideline, deep
         double dx = lx - Q.qbx, dy = ly - Q.qby, len = hypot(dx, dy);
         if (len < 1) len = 1;
-        double drag = v / THROW_K;
+        double drag = v / Q.k;
         if (drag < DRAG_MIN) drag = DRAG_MIN;
         if (drag > DRAG_MAX) drag = DRAG_MAX;
         // slingshot: the ball goes opposite the drag
@@ -332,6 +343,16 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
 
     default:
         finger(0, rb_vf.gui_x, rb_vf.gui_y);
+        if (st == 3 && !Q.measured && Q.drag > 0) {            // ball just left his hand: calibrate
+            Q.measured = 1;
+            double vel = rb_get_inst_real(ball, SLOT_VELOCITY), dd = rb_get_inst_real(ball, SLOT_DRAGDIST);
+            if (vel > 0.5 && dd > 10) {
+                double k = vel / dd;
+                if (Q.mtp > 0) g_k_per_mtp = k / Q.mtp;
+                rb_log("cpuqb: measured k %.4f (planned %.4f, drag %.1f/%.1f, arm %.4f)", k, Q.k, dd, Q.drag, Q.mtp);
+                Q.k = k;
+            }
+        }
         break;
     }
 }
