@@ -46,7 +46,10 @@ void rb_def_step(CInstance *ball, CInstance *other, int cpu_offense, double los_
     D.t++;
 
     if (!D.ctrl && fwd != 0 && qbx != 0)                   // linebacker spot
+    {
         D.ctrl = nearest_defender(ball, other, los_x + fwd * 110, qby);
+        if (D.ctrl) rb_log("defense: controlling %p", (void *)D.ctrl);
+    }
 
     int down; double gx, gy;
     rb_real_touch(ball, &down, &gx, &gy);
@@ -60,6 +63,9 @@ void rb_def_step(CInstance *ball, CInstance *other, int cpu_offense, double los_
             if (a < 0) a += 360;
             D.jdir = a;
             D.jforce = m >= STICK_FULL ? 1.0 : m / STICK_FULL;
+            if (!D.steering || D.t % 30 == 0)
+                rb_log("defense: steer dir %.0f force %.2f (player at %.0f,%.0f)", D.jdir, D.jforce,
+                       rb_get_builtin_real(D.ctrl, SLOT_X), rb_get_builtin_real(D.ctrl, SLOT_Y));
             D.steering = 1;
         } else D.steering = 0;
     } else {
@@ -80,7 +86,7 @@ void rb_def_after_ai(CInstance *player) {
     rb_set_inst_real(player, SLOT_JFORCE, D.jforce);
 }
 
-// ring under the controlled defender (before he's drawn, so it sits under his feet)
+// marker on the controlled defender: ring at his feet + dot over his head (drawn after him, on top)
 static void *f_circle;
 void rb_def_draw(CInstance *player) {
     if (!D.active || player != D.ctrl) return;
@@ -88,8 +94,10 @@ void rb_def_draw(CInstance *player) {
     if (!f_circle) return;
     double x = rb_get_builtin_real(player, SLOT_X), y = rb_get_builtin_real(player, SLOT_Y);
     double col = 65535;    // c_yellow (BGR)
-    for (int r = 9; r <= 11; r++) {
+    for (int r = 13; r <= 15; r++) {
         double a[6] = { x, y, r, col, col, 1 };
         rb_call(f_circle, player, 6, a);
     }
+    double dot[6] = { x, y - 38, 5, col, col, 0 };
+    rb_call(f_circle, player, 6, dot);
 }

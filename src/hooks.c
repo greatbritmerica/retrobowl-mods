@@ -133,8 +133,8 @@ RValue *hook_get_destination(CInstance *self, CInstance *other, RValue *res, int
 }
 
 void hook_player_draw(CInstance *self, CInstance *other) {
-    rb_def_draw(self);
     ORIG_EV(player_draw)(self, other);
+    rb_def_draw(self);
 }
 
 // =============================================================== install
