@@ -1,0 +1,92 @@
+// rb_runtime.c - loader, pointer-table install, logging and variable helpers.
+#include "rb.h"
+#include "sys.h"
+
+extern const struct mach_header *_dyld_get_image_header(uint32_t image_index);
+void rb_install_hooks(void **tab);   // hooks.c
+
+uintptr_t rb_base;
+
+typedef void (*fn_get_inst_var)(RValue *inst, int slot, int arr, RValue *out, int a, int b);
+typedef void (*fn_set_ref_var)(RValue *target, int slot, int arr, RValue *val);
+typedef void (*fn_rv_free)(RValue *v);
+typedef double (*fn_rv_to_double)(RValue *v);
+
+// ---------------------------------------------------------------- logging: Documents/rbmod.log
+static FILE *g_log;
+
+void rb_log(const char *fmt, ...) {
+    if (!g_log) {
+        const char *home = getenv("HOME");
+        if (!home) return;
+        char path[1024];
+        snprintf(path, sizeof path, "%s/Documents/rbmod.log", home);
+        g_log = fopen(path, "a");
+        if (!g_log) return;
+    }
+    char buf[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof buf, fmt, ap);
+    va_end(ap);
+    time_t t = time(NULL);
+    fprintf(g_log, "[%ld] %s\n", (long)t, buf);
+    fflush(g_log);
+}
+
+// ---------------------------------------------------------------- variables
+RValue rb_obj_ref(int object_index) {
+    RValue r;
+    r.i64 = 0x0100000000000000LL | (int64_t)object_index;
+    r.flags = 0;
+    r.kind = RV_REF;
+    return r;
+}
+
+double rb_rv_real(RValue *v) {
+    if (v->kind == RV_REAL || v->kind == RV_BOOL) return v->real;
+    return ((fn_rv_to_double)RB(VA_RV_TO_DOUBLE))(v);
+}
+
+double rb_get_obj_real(int object_index, uint64_t slot_va) {
+    RValue ref = rb_obj_ref(object_index);
+    RValue out = {0};
+    out.kind = RV_UNDEFINED;
+    ((fn_get_inst_var)RB(VA_GET_INST_VAR))(&ref, rb_slot(slot_va), (int)0x80000000, &out, 0, 0);
+    ((fn_rv_free)RB(VA_RV_FREE))(&ref);
+    double d = (out.kind == RV_UNDEFINED) ? -9999.0 : rb_rv_real(&out);
+    ((fn_rv_free)RB(VA_RV_FREE))(&out);
+    return d;
+}
+
+double rb_get_inst_real(CInstance *inst, uint64_t slot_va) {
+    if (!inst) return -9999.0;
+    typedef RValue *(*getref)(CInstance *, int);
+    getref f = (getref)((*(void ***)inst)[2]);   // vtable +0x10: variable reference (read)
+    RValue *v = f(inst, rb_slot(slot_va));
+    if (!v || v->kind == RV_UNDEFINED) return -9999.0;
+    return rb_rv_real(v);
+}
+
+void rb_set_obj_real(int object_index, uint64_t slot_va, double val) {
+    RValue ref = rb_obj_ref(object_index);
+    RValue v = {0};
+    v.real = val;
+    v.kind = RV_REAL;
+    ((fn_set_ref_var)RB(VA_SET_REF_VAR))(&ref, rb_slot(slot_va), (int)0x80000000, &v);
+    ((fn_rv_free)RB(VA_RV_FREE))(&ref);
+}
+
+// ---------------------------------------------------------------- load
+__attribute__((constructor)) static void rb_init(void) {
+    rb_base = (uintptr_t)_dyld_get_image_header(0);
+    void **tab = (void **)RB(RB_TAB_VA);
+    rb_log("RBMod loaded: image base %p, table %p", (void *)rb_base, (void *)tab);
+    if (tab[0] != 0) {
+        rb_log("table not empty (%p) - refusing to install", tab[0]);
+        return;
+    }
+    rb_install_hooks(tab);
+    tab[TAB_MAGIC] = (void *)RB_TAB_MAGIC;
+    rb_log("hooks installed");
+}

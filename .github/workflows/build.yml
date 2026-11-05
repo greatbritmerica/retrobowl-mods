@@ -1,0 +1,21 @@
+name: build
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  dylib:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build libRBMod.dylib
+        run: make
+      - name: Inspect
+        run: |
+          file build/libRBMod.dylib
+          otool -L build/libRBMod.dylib
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libRBMod
+          path: build/libRBMod.dylib

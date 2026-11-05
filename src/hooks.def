@@ -1,0 +1,7 @@
+// Function-entry hooks. One line each:  HOOK(name, entry_va, "first instruction")
+// tools/inject.py builds a stub per line (in this order) and checks the first instruction.
+// In C, define:  RValue *hook_<name>(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv)
+// and call the original with ORIG(name)(self, other, res, argc, argv).
+// The first instruction must not be PC-relative (adr/adrp/b/bl/cbz/ldr literal).
+
+HOOK(change_possession, 0x10010aca8, "sub sp, sp, #0x150")

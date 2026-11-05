@@ -1,0 +1,14 @@
+--- !tapi-tbd
+tbd-version:     4
+targets:         [ arm64-ios ]
+install-name:    '/usr/lib/libSystem.B.dylib'
+current-version: 1311
+exports:
+  - targets:     [ arm64-ios ]
+    symbols:     [ __dyld_get_image_header, __dyld_get_image_vmaddr_slide, __dyld_image_count,
+                   _memcpy, _memset, _memmove, _memcmp, _strlen, _strcmp, _strncmp, _strstr,
+                   _snprintf, _vsnprintf, _fopen, _fclose, _fprintf, _fputs, _fflush, _fgets, _fread, _fwrite,
+                   _getenv, _time, _malloc, _calloc, _free, _arc4random, _arc4random_uniform,
+                   _atan2, _sqrt, _sin, _cos, _fabs, _floor, _ceil, _fmod, _pow, _hypot,
+                   dyld_stub_binder ]
+...

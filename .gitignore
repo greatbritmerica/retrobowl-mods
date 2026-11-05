@@ -1,0 +1,3 @@
+build/
+*.ipa
+__pycache__/
