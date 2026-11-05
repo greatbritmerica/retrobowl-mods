@@ -117,3 +117,37 @@ int rb_input_install(void) {
     rb_log("input: %d functions, %d variables in runtime; wrapped %d", nf, nv, found);
     return 1;
 }
+
+// ---------------------------------------------------------------- real screen (bypasses the virtual finger)
+void rb_real_touch(CInstance *self, int *down, double *gx, double *gy) {
+    RValue res = {0}, args[2] = {{{0}}};
+    args[0].kind = RV_REAL; args[0].real = 0;      // device 0
+    args[1].kind = RV_REAL; args[1].real = 1;      // mb_left
+    *down = 0; *gx = *gy = 0;
+    if (orig_device_mouse_check_button) { orig_device_mouse_check_button(&res, self, self, 2, args); *down = rb_rv_real(&res) > 0.5; }
+    if (orig_device_mouse_x_to_gui) { orig_device_mouse_x_to_gui(&res, self, self, 1, args); *gx = rb_rv_real(&res); }
+    if (orig_device_mouse_y_to_gui) { orig_device_mouse_y_to_gui(&res, self, self, 1, args); *gy = rb_rv_real(&res); }
+}
+
+// ---------------------------------------------------------------- call any engine built-in by name
+void *rb_builtin(const char *name) {
+    RFunction *fns = *(RFunction **)RB(VA_THE_FUNCTIONS);
+    int nf = *(int *)RB(VA_THE_FUNCTIONS_N);
+    for (int i = 0; fns && i < nf; i++)
+        if (fns[i].name && !strcmp(fns[i].name, name)) {
+            // wrapped entries: hand back the original
+#define ORIG_OF(id) if (fns[i].fn == wrap_##id) return (void *)orig_##id;
+            INPUT_FNS(ORIG_OF)
+            return (void *)fns[i].fn;
+        }
+    return 0;
+}
+
+double rb_call(void *fn, CInstance *self, int argc, const double *argv) {
+    RValue res = {0}, args[8];
+    for (int i = 0; i < argc && i < 8; i++) { args[i].real = argv[i]; args[i].flags = 0; args[i].kind = RV_REAL; }
+    res.kind = RV_UNDEFINED;
+    if (!fn) return 0;
+    ((BuiltinFn)fn)(&res, self, self, argc, args);
+    return rb_rv_real(&res);
+}

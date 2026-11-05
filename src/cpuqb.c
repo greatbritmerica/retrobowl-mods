@@ -289,3 +289,7 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         break;
     }
 }
+
+void rb_cpuqb_info(double *los_x, double *fwd, double *qbx, double *qby) {
+    *los_x = Q.los_x; *fwd = Q.fwd; *qbx = Q.qbx; *qby = Q.qby;
+}

@@ -1,4 +1,5 @@
 #pragma once
+#include "rb.h"
 extern int rb_input_log;      // log every change of an input value (diagnostics)
 extern unsigned rb_frame;     // ball-update counter
 int rb_input_install(void);   // swap the input built-ins; returns 0 if the runtime isn't ready yet
@@ -12,3 +13,7 @@ typedef struct {
 } VirtualFinger;
 extern VirtualFinger rb_vf;
 void rb_vf_frame(void);       // call once per game step before the game reads input
+
+void rb_real_touch(CInstance *self, int *down, double *gx, double *gy);   // the player's actual finger
+void *rb_builtin(const char *name);                                       // engine built-in by name
+double rb_call(void *fn, CInstance *self, int argc, const double *argv);   // call it with real args

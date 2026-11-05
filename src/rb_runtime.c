@@ -99,6 +99,16 @@ void rb_set_obj_real(int object_index, uint64_t slot_va, double val) {
     ((fn_rv_free)RB(VA_RV_FREE))(&ref);
 }
 
+typedef void (*fn_rv_free_content)(RValue *v);
+void rb_set_inst_real(CInstance *inst, uint64_t slot_va, double val) {
+    if (!inst) return;
+    typedef RValue *(*getref)(CInstance *, int);
+    RValue *v = ((getref)((*(void ***)inst)[3]))(inst, rb_slot(slot_va));   // vtable +0x18: for writing
+    if (!v) return;
+    if ((1u << (v->kind & 31)) & 0x46) ((fn_rv_free_content)RB(0x100004c9cULL))(v);   // string/array/struct
+    v->real = val; v->flags = 0; v->kind = RV_REAL;
+}
+
 // ---------------------------------------------------------------- instances
 typedef struct { uint8_t raw[0x40]; } WithIter;
 typedef int (*fn_with_begin)(WithIter *, CInstance **, CInstance **, RValue *);

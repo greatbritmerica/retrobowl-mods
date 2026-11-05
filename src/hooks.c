@@ -4,6 +4,7 @@
 #include "sys.h"
 #include "input.h"
 #include "cpuqb.h"
+#include "defense.h"
 
 enum {
 #define HOOK(name, va, insn) HK_##name,
@@ -12,6 +13,7 @@ enum {
     HK_COUNT
 };
 #define ORIG(name) ((GMLScript)RB_TRAMP(HK_##name))
+#define ORIG_EV(name) ((GMLEvent)RB_TRAMP(HK_##name))
 
 #define VA_S_SIMMING_ACTION 0x100565cf0ULL
 
@@ -109,6 +111,9 @@ RValue *hook_update_ball(CInstance *self, CInstance *other, RValue *res, int arg
     double poss = rb_get_obj_real(OBJ_CONTROLLER, SLOT_POSSESSION);
     int cpu_offense = human >= 0 && poss >= 0 && poss != human;
     rb_cpuqb_step(self, other, cpu_offense);
+    double los, fwd, qbx, qby;
+    rb_cpuqb_info(&los, &fwd, &qbx, &qby);
+    rb_def_step(self, other, cpu_offense, los, fwd, qbx, qby);
     double st = rb_get_inst_real(self, SLOT_STATE);
     if (st != g_last_state) {
         rb_log("ball f%u state %g -> %g  pos %.0f,%.0f vel %.2f dist %.1f %s",
@@ -118,6 +123,18 @@ RValue *hook_update_ball(CInstance *self, CInstance *other, RValue *res, int arg
         g_last_state = st;
     }
     return ORIG(update_ball)(self, other, res, argc, argv);
+}
+
+// =============================================================== player control on defense
+RValue *hook_get_destination(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
+    RValue *r = ORIG(get_destination)(self, other, res, argc, argv);
+    rb_def_after_ai(self);
+    return r;
+}
+
+void hook_player_draw(CInstance *self, CInstance *other) {
+    rb_def_draw(self);
+    ORIG_EV(player_draw)(self, other);
 }
 
 // =============================================================== install

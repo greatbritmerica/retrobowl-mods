@@ -56,6 +56,8 @@ enum { OBJ_BALL = 3, OBJ_CONTROLLER = 44, OBJ_MASTER = 88, OBJ_PLAYER = 117, OBJ
 #define SLOT_DOWN            0x100fa4b48ULL
 #define SLOT_SCRIMMAGE       0x100faece8ULL
 #define SLOT_KICKING         0x100fa6308ULL
+#define SLOT_JDIR            0x100fa6238ULL
+#define SLOT_JFORCE          0x100fa6258ULL
 
 // ---------------------------------------------------------------- runtime functions
 #define VA_GET_INST_VAR   0x100bba9f0ULL  // (RValue* inst, slot, INT_MIN, RValue* out, 0, 0)
@@ -85,6 +87,7 @@ double rb_get_obj_real(int object_index, uint64_t slot_va); // object_index.var 
 double rb_get_inst_real(CInstance *inst, uint64_t slot_va); // inst.var
 double rb_get_builtin_real(CInstance *inst, uint64_t slot_va); // inst.x, inst.direction ...
 void   rb_set_obj_real(int object_index, uint64_t slot_va, double v);
+void   rb_set_inst_real(CInstance *inst, uint64_t slot_va, double v);
 double rb_rv_real(RValue *v);
 // with (target) { fn(instance) }  - target: an object ref (rb_obj_ref) or an instance value.
 // fn returns nonzero to stop early. Returns the number of instances visited.
