@@ -3,6 +3,7 @@
 #include "ui.h"
 #include "sys.h"
 #include "input.h"
+#include "cpuqb.h"
 
 enum {
 #define HOOK(name, va, insn) HK_##name,
@@ -100,24 +101,23 @@ RValue *hook_action_result(CInstance *self, CInstance *other, RValue *res, int a
     return r;
 }
 
-// per-step ball update: frame counter, input logging only while a play is live, state changes
+// per-step ball update: CPU quarterback on CPU drives, ball-state log
 static double g_last_state = -1;
 RValue *hook_update_ball(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
     rb_frame++;
+    double human = rb_get_obj_real(OBJ_MASTER, SLOT_PLAYERTEAMINDEX);
+    double poss = rb_get_obj_real(OBJ_CONTROLLER, SLOT_POSSESSION);
+    int cpu_offense = human >= 0 && poss >= 0 && poss != human;
+    rb_cpuqb_step(self, other, cpu_offense);
     double st = rb_get_inst_real(self, SLOT_STATE);
-    rb_input_log = 1;
     if (st != g_last_state) {
-        rb_log("ball f%u %p state %g -> %g  pos %.1f,%.1f dir %.1f vel %.2f zvel %.2f drag %.1f,%.1f dist %.1f touch %.1f,%.1f",
-               rb_frame, (void *)self, g_last_state, st,
-               rb_get_builtin_real(self, SLOT_X), rb_get_builtin_real(self, SLOT_Y),
-               rb_get_builtin_real(self, SLOT_DIRECTION), rb_get_inst_real(self, SLOT_VELOCITY),
-               rb_get_inst_real(self, SLOT_ZVEL), rb_get_inst_real(self, SLOT_DRAGX),
-               rb_get_inst_real(self, SLOT_DRAGY), rb_get_inst_real(self, SLOT_DRAGDIST),
-               rb_get_inst_real(self, SLOT_XTOUCH), rb_get_inst_real(self, SLOT_YTOUCH));
+        rb_log("ball f%u state %g -> %g  pos %.0f,%.0f vel %.2f dist %.1f %s",
+               rb_frame, g_last_state, st, rb_get_builtin_real(self, SLOT_X), rb_get_builtin_real(self, SLOT_Y),
+               rb_get_inst_real(self, SLOT_VELOCITY), rb_get_inst_real(self, SLOT_DRAGDIST),
+               cpu_offense ? "[CPU ball]" : "");
         g_last_state = st;
     }
-    RValue *r = ORIG(update_ball)(self, other, res, argc, argv);
-    return r;
+    return ORIG(update_ball)(self, other, res, argc, argv);
 }
 
 // =============================================================== install

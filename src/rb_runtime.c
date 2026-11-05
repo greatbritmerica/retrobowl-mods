@@ -99,6 +99,36 @@ void rb_set_obj_real(int object_index, uint64_t slot_va, double val) {
     ((fn_rv_free)RB(VA_RV_FREE))(&ref);
 }
 
+// ---------------------------------------------------------------- instances
+typedef struct { uint8_t raw[0x40]; } WithIter;
+typedef int (*fn_with_begin)(WithIter *, CInstance **, CInstance **, RValue *);
+typedef int (*fn_with_next)(WithIter *, CInstance **, CInstance **);
+typedef void (*fn_with_end)(WithIter *, CInstance **, CInstance **);
+typedef void (*fn_with_dtor)(WithIter *);
+
+int rb_with(RValue *target, CInstance *self, CInstance *other, int (*fn)(CInstance *, void *), void *ctx) {
+    WithIter it;
+    memset(&it, 0, sizeof it);
+    CInstance *s = self, *o = other;
+    int visited = 0;
+    int n = ((fn_with_begin)RB(VA_WITH_BEGIN))(&it, &s, &o, target);
+    if (n >= 1) {
+        do {
+            visited++;
+            if (fn(s, ctx)) break;
+        } while (((fn_with_next)RB(VA_WITH_NEXT))(&it, &s, &o));
+    }
+    ((fn_with_end)RB(VA_WITH_END))(&it, &s, &o);
+    ((fn_with_dtor)RB(VA_WITH_DTOR))(&it);
+    return visited;
+}
+
+RValue *rb_inst_var(CInstance *inst, uint64_t slot_va) {
+    if (!inst) return 0;
+    typedef RValue *(*getref)(CInstance *, int);
+    return ((getref)((*(void ***)inst)[2]))(inst, rb_slot(slot_va));
+}
+
 // ---------------------------------------------------------------- load
 __attribute__((constructor)) static void rb_init(void) {
     rb_base = (uintptr_t)_dyld_get_image_header(0);

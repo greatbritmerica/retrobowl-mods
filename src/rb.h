@@ -53,6 +53,9 @@ enum { OBJ_BALL = 3, OBJ_CONTROLLER = 44, OBJ_MASTER = 88, OBJ_PLAYER = 117, OBJ
 #define SLOT_XTOUCH          0x100fb0638ULL
 #define SLOT_YTOUCH          0x100fb0788ULL
 #define SLOT_MY_THROW_POWER  0x100fa6d98ULL
+#define SLOT_DOWN            0x100fa4b48ULL
+#define SLOT_SCRIMMAGE       0x100faece8ULL
+#define SLOT_KICKING         0x100fa6308ULL
 
 // ---------------------------------------------------------------- runtime functions
 #define VA_GET_INST_VAR   0x100bba9f0ULL  // (RValue* inst, slot, INT_MIN, RValue* out, 0, 0)
@@ -62,6 +65,10 @@ enum { OBJ_BALL = 3, OBJ_CONTROLLER = 44, OBJ_MASTER = 88, OBJ_PLAYER = 117, OBJ
 #define VA_RV_FREE        0x100004ea0ULL
 #define VA_RV_COPY        0x10000684cULL  // (dst, src)
 #define VA_RV_TO_DOUBLE   0x1008792c8ULL
+#define VA_WITH_BEGIN     0x100bcffa0ULL  // (iter*, self**, other**, RValue* target) -> count
+#define VA_WITH_NEXT      0x100bd0374ULL  // (iter*, self**, other**) -> more
+#define VA_WITH_END       0x100bd03a4ULL  // (iter*, self**, other**)
+#define VA_WITH_DTOR      0x10000dea4ULL  // (iter*)
 
 extern uintptr_t rb_base;   // runtime address of the game's Mach-O header
 #define RB(va) ((void *)(rb_base + ((uint64_t)(va) - RB_IMAGE_BASE)))
@@ -79,5 +86,9 @@ double rb_get_inst_real(CInstance *inst, uint64_t slot_va); // inst.var
 double rb_get_builtin_real(CInstance *inst, uint64_t slot_va); // inst.x, inst.direction ...
 void   rb_set_obj_real(int object_index, uint64_t slot_va, double v);
 double rb_rv_real(RValue *v);
+// with (target) { fn(instance) }  - target: an object ref (rb_obj_ref) or an instance value.
+// fn returns nonzero to stop early. Returns the number of instances visited.
+int rb_with(RValue *target, CInstance *self, CInstance *other, int (*fn)(CInstance *inst, void *ctx), void *ctx);
+RValue *rb_inst_var(CInstance *inst, uint64_t slot_va);    // pointer to inst.var (read), or 0
 const char *rb_rv_str(RValue *v, char *buf, int n);   // printable form of any value
 #define RB_CALLER() ((unsigned long long)((uintptr_t)__builtin_return_address(0) - rb_base + RB_IMAGE_BASE))

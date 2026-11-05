@@ -20,6 +20,28 @@ typedef struct { const char *name; BuiltinGet get; void *set; uint8_t settable; 
 
 int rb_input_log = 0;           // log every change of an input value
 unsigned rb_frame;              // advanced by the ball update hook
+VirtualFinger rb_vf;
+
+void rb_vf_frame(void) { rb_vf.prev_down = rb_vf.down; }
+
+// value the virtual finger reports for each built-in (argc/args as the game passed them)
+static int vf_value(const char *id, int argc, RValue *args, double *out) {
+    if (!rb_vf.active) return 0;
+    int dev = 0;
+    if (!strncmp(id, "device_", 7) && argc > 0) dev = (int)rb_rv_real(&args[0]);
+    int other_dev = dev != 0;
+    int down = rb_vf.down && !other_dev, prev = rb_vf.prev_down && !other_dev;
+    if (strstr(id, "check_button_pressed"))       *out = down && !prev;
+    else if (strstr(id, "check_button_released")) *out = !down && prev;
+    else if (strstr(id, "check_button"))          *out = down;
+    else if (!strcmp(id, "mouse_button"))         *out = down ? 1 : 0;
+    else if (strstr(id, "x_to_gui") || strstr(id, "raw_x") || !strcmp(id, "window_mouse_get_x")) *out = rb_vf.gui_x;
+    else if (strstr(id, "y_to_gui") || strstr(id, "raw_y") || !strcmp(id, "window_mouse_get_y")) *out = rb_vf.gui_y;
+    else if (strstr(id, "_x"))                    *out = rb_vf.room_x;
+    else if (strstr(id, "_y"))                    *out = rb_vf.room_y;
+    else return 0;
+    return 1;
+}
 
 // ---------------------------------------------------------------- change-only logging
 typedef struct { const char *name; double a0, a1, val; int used; } Seen;
@@ -47,12 +69,16 @@ static void note(const char *name, int argc, RValue *args, double val) {
 #define WRAP_FN(id)                                                                         \
     static BuiltinFn orig_##id;                                                             \
     static void wrap_##id(RValue *res, CInstance *self, CInstance *other, int argc, RValue *args) { \
+        double v;                                                                           \
+        if (vf_value(#id, argc, args, &v)) { res->real = v; res->flags = 0; res->kind = RV_REAL; return; } \
         orig_##id(res, self, other, argc, args);                                            \
         if (rb_input_log) note(#id, argc, args, rb_rv_real(res));                           \
     }
 #define WRAP_VAR(id)                                                                        \
     static BuiltinGet origv_##id;                                                           \
     static int wrapv_##id(CInstance *self, int arr, RValue *out) {                          \
+        double v;                                                                           \
+        if (vf_value(#id, 0, 0, &v)) { out->real = v; out->flags = 0; out->kind = RV_REAL; return 1; } \
         int r = origv_##id(self, arr, out);                                                 \
         if (rb_input_log) note(#id, 0, 0, rb_rv_real(out));                                 \
         return r;                                                                           \
