@@ -48,6 +48,19 @@ double rb_rv_real(RValue *v) {
     return ((fn_rv_to_double)RB(VA_RV_TO_DOUBLE))(v);
 }
 
+const char *rb_rv_str(RValue *v, char *buf, int n) {
+    if (!v) return "(null)";
+    switch (v->kind & 0xffffff) {
+    case RV_STRING: {
+        const char *s = v->ptr ? *(const char **)v->ptr : 0;   // RefString { const char *thing; ... }
+        return s ? s : "(nullstr)";
+    }
+    case RV_REAL: case RV_BOOL: snprintf(buf, n, "%g", v->real); return buf;
+    case RV_UNDEFINED: return "undefined";
+    default: snprintf(buf, n, "<kind %u>", v->kind); return buf;
+    }
+}
+
 double rb_get_obj_real(int object_index, uint64_t slot_va) {
     RValue ref = rb_obj_ref(object_index);
     RValue out = {0};

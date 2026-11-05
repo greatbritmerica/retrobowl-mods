@@ -1,6 +1,7 @@
 // hooks.c - the mods themselves.
 #include "rb.h"
 #include "ui.h"
+#include "sys.h"
 
 enum {
 #define HOOK(name, va, insn) HK_##name,
@@ -35,10 +36,13 @@ static void on_drive_choice(int c) {     // main thread
 }
 
 RValue *hook_change_possession(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
+    unsigned long long caller = RB_CALLER();
+    double before = rb_get_obj_real(OBJ_CONTROLLER, SLOT_POSSESSION);
     RValue *r = ORIG(change_possession)(self, other, res, argc, argv);
     double poss = rb_get_obj_real(OBJ_CONTROLLER, SLOT_POSSESSION);
     double human = rb_get_obj_real(OBJ_MASTER, SLOT_PLAYERTEAMINDEX);
-    rb_log("possession -> %g (human team %g)", poss, human);
+    rb_log("possession %g -> %g (human team %g) caller %llx stage %g", before, poss, human, caller,
+           rb_get_obj_real(OBJ_CONTROLLER, SLOT_COMM_STAGE));
     g_choice = CHOICE_NONE;
     g_pending = 0;
     if (human >= 0 && poss != human && !simming_action(self, other)) {
@@ -70,6 +74,28 @@ int rb_gate_attack(CInstance *self, int human_has_ball) {
     rb_log("ATTACK stage: human_has_ball %d, choice %d -> %s", human_has_ball, g_choice,
            g == GATE_FIELD ? "field" : "game default");
     return g;
+}
+
+// =============================================================== diagnostics
+// game's own debug log (slog) -> rbmod.log
+RValue *hook_slog(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
+    char line[400]; int n = 0;
+    for (int i = 0; i < argc && i < 6 && n < (int)sizeof line - 80; i++) {
+        char b[48];
+        n += snprintf(line + n, sizeof line - n, "%s%s", i ? " " : "", rb_rv_str(argv[i], b, sizeof b));
+    }
+    line[n < (int)sizeof line ? n : (int)sizeof line - 1] = 0;
+    rb_log("slog: %s", line);
+    return ORIG(slog)(self, other, res, argc, argv);
+}
+
+RValue *hook_action_result(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
+    char b[48];
+    rb_log("action_result(%s) possession %g caller %llx", argc > 0 ? rb_rv_str(argv[0], b, sizeof b) : "-",
+           rb_get_obj_real(OBJ_CONTROLLER, SLOT_POSSESSION), RB_CALLER());
+    RValue *r = ORIG(action_result)(self, other, res, argc, argv);
+    rb_log("action_result done: possession %g", rb_get_obj_real(OBJ_CONTROLLER, SLOT_POSSESSION));
+    return r;
 }
 
 // =============================================================== install

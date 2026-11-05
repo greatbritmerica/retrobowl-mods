@@ -69,3 +69,5 @@ double rb_get_obj_real(int object_index, uint64_t slot_va); // object_index.var 
 double rb_get_inst_real(CInstance *inst, uint64_t slot_va); // inst.var
 void   rb_set_obj_real(int object_index, uint64_t slot_va, double v);
 double rb_rv_real(RValue *v);
+const char *rb_rv_str(RValue *v, char *buf, int n);   // printable form of any value
+#define RB_CALLER() ((unsigned long long)((uintptr_t)__builtin_return_address(0) - rb_base + RB_IMAGE_BASE))

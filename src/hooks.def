@@ -6,3 +6,5 @@
 
 HOOK(change_possession, 0x10010aca8, "sub sp, sp, #0x150")
 HOOK(update_commentary, 0x1005ab618, "stp d11, d10, [sp, #-0x80]!")
+HOOK(slog, 0x10062b030, "sub sp, sp, #0xe0")
+HOOK(action_result, 0x1000f7200, "stp d11, d10, [sp, #-0x80]!")
