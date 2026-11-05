@@ -10,7 +10,6 @@ uintptr_t rb_base;
 typedef void (*fn_get_inst_var)(RValue *inst, int slot, int arr, RValue *out, int a, int b);
 typedef void (*fn_set_ref_var)(RValue *target, int slot, int arr, RValue *val);
 typedef void (*fn_rv_free)(RValue *v);
-typedef double (*fn_rv_to_double)(RValue *v);
 
 // ---------------------------------------------------------------- logging: Documents/rbmod.log
 static FILE *g_log;
@@ -43,9 +42,15 @@ RValue rb_obj_ref(int object_index) {
     return r;
 }
 
+// Never hand the engine's converter a value it can't convert: it raises a GML error (abort).
 double rb_rv_real(RValue *v) {
-    if (v->kind == RV_REAL || v->kind == RV_BOOL) return v->real;
-    return ((fn_rv_to_double)RB(VA_RV_TO_DOUBLE))(v);
+    if (!v) return 0;
+    switch (v->kind & 0xffffff) {
+    case RV_REAL: case RV_BOOL: return v->real;
+    case 7:  return (double)(int32_t)v->i64;      // int32
+    case 10: return (double)v->i64;               // int64
+    default: return 0;                            // undefined, string, array, struct, ...
+    }
 }
 
 const char *rb_rv_str(RValue *v, char *buf, int n) {
