@@ -19,13 +19,14 @@
 #define P0X          400.0      // where the finger goes down (GUI)
 #define P0Y          190.0
 
-enum { PH_IDLE, PH_PRESNAP, PH_HANDOFF, PH_PULL, PH_READ, PH_AIM, PH_DONE };
+enum { PH_IDLE, PH_PRESNAP, PH_HANDOFF, PH_PULL, PH_READ, PH_AIM, PH_SCRAMBLE_GO, PH_SCRAMBLE, PH_DONE };
 
 typedef struct { CInstance *inst; double x, y, vx, vy; int seen; } Track;
 
 static struct {
     CInstance *ball;
-    int phase, is_run;
+    int phase, is_run, deep, scrambled;
+    double down, yards;
     unsigned t, t_phase, read_frames, hold;
     double los_x, fwd;            // line of scrimmage x, +1/-1 = offense's forward x direction
     CInstance *qb;
@@ -129,14 +130,15 @@ static int pick_receiver(double *score_out, double *open_out) {
         if (!r->seen || r->inst == Q.qb) continue;
         double depth = (r->x - Q.los_x) * Q.fwd;
         double spd = hypot(r->vx, r->vy);
-        if (depth < 25 && spd < 1.6) continue;              // linemen: at the line and slow
+        if (depth > -22 && depth < 22 && spd < 1.6) continue;   // linemen: on the line and slow
         double lx, ly, v;
         lead_point(i, &lx, &ly, &v);
         if (v / THROW_K > DRAG_MAX) continue;               // out of range
         double T = AIR_K * v;
         double open = nearest_def(lx, ly, T * 0.7);
         double gain = (lx - Q.los_x) * Q.fwd;
-        double score = open + gain * 0.12 - (open < 30 ? 60 : 0) + frand() * 12;
+        double score = open + gain * (Q.deep ? 0.30 : 0.12) - (open < 30 ? 60 : 0) + frand() * 12;
+        if (Q.down >= 3 && gain < Q.yards * 20 - 20) score -= 25;   // short of the sticks on 3rd/4th
         if (score > best_score) { best_score = score; best = i; best_open = open; }
     }
     if (score_out) *score_out = best_score;
@@ -196,8 +198,17 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         Q.fwd = (sx / n < Q.qbx) ? -1 : 1;                     // defense lines up in front
         Q.los_x = Q.qbx + Q.fwd * 35;
         Q.t_phase = 40 + arc4random_uniform(40);              // snap after this many frames
-        Q.is_run = frand() < 0.35;
-        rb_log("cpuqb: new play, los %.0f fwd %+.0f, %s", Q.los_x, Q.fwd, Q.is_run ? "RUN" : "PASS");
+        Q.down = rb_get_obj_real(OBJ_CONTROLLER, SLOT_DOWN);
+        Q.yards = rb_get_obj_real(OBJ_CONTROLLER, SLOT_YARDS);
+        double p_run = 0.42;
+        if (Q.yards > 0 && Q.yards <= 2) p_run = 0.65;
+        else if (Q.yards >= 8) p_run = 0.22;
+        if (Q.down >= 3 && Q.yards >= 4) p_run = 0.10;
+        Q.is_run = frand() < p_run;
+        Q.deep = !Q.is_run && frand() < 0.18;
+        rb_log("cpuqb: new play, down %g yards %g (x_yards %g), los %.0f fwd %+.0f, %s%s", Q.down, Q.yards,
+               rb_get_obj_real(OBJ_CONTROLLER, SLOT_X_YARDS), Q.los_x, Q.fwd,
+               Q.is_run ? "RUN" : "PASS", Q.deep ? " (deep shot)" : "");
     }
 
     switch (Q.phase) {
@@ -233,10 +244,11 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         break;
 
     case PH_PULL:                                               // drag back past the deadzone
+        if (Q.scrambled) { rb_vf.room_x = Q.qbx; rb_vf.room_y = Q.qby; }
         finger(1, P0X - Q.fwd * 30, P0Y);
         if (st == 2) {
             Q.phase = PH_READ; Q.t_phase = Q.t;
-            Q.read_frames = 35 + arc4random_uniform(60);
+            Q.read_frames = Q.scrambled ? 6 : 35 + arc4random_uniform(60);
         } else if (Q.t - Q.t_phase > 40) {                      // didn't take: lift and retry
             finger(0, P0X, P0Y); Q.phase = PH_PRESNAP; Q.t_phase = Q.t + 10;
         }
@@ -250,6 +262,14 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         double score, open;
         int r = pick_receiver(&score, &open);
         int go = 0;
+        if (!Q.scrambled && held > 20 && pressure < 70 && open < 40) {       // pocket collapsing, nobody open
+            double lane = nearest_def(Q.qbx + Q.fwd * 80, Q.qby, 10);
+            if (lane > 55 && frand() < 0.08) {                              // checked every frame -> ~quickly
+                Q.phase = PH_SCRAMBLE_GO; Q.hold = 0; Q.scrambled = 1;
+                rb_log("cpuqb: scramble (pressure %.0f, lane %.0f)", pressure, lane);
+                break;
+            }
+        }
         if (pressure < 45 && held > 8) go = 1;                              // about to be hit
         else if (held >= Q.read_frames && r >= 0 && open > 40) go = 1;      // open man
         else if (held >= Q.read_frames + 70) go = 1;                        // out of time
@@ -280,6 +300,32 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
             finger(0, rb_vf.gui_x, rb_vf.gui_y);
             Q.phase = PH_DONE;
             rb_log("cpuqb: release toward %.0f,%.0f drag %.0f (qb %.0f,%.0f)", lx, ly, drag, Q.qbx, Q.qby);
+        }
+        break;
+    }
+
+    case PH_SCRAMBLE_GO: {                                      // "throw it backwards" = QB takes off
+        if (st != 2) { Q.phase = st == 5 ? PH_SCRAMBLE : PH_DONE; finger(0, P0X, P0Y); break; }
+        finger(1, P0X + Q.fwd * 45, P0Y);                       // drag forward -> ball would go backward
+        if (++Q.hold >= 10) { finger(0, rb_vf.gui_x, rb_vf.gui_y); Q.phase = PH_SCRAMBLE; Q.t_phase = Q.t; }
+        break;
+    }
+
+    case PH_SCRAMBLE: {                                         // QB running: look for a throw on the run
+        finger(0, P0X, P0Y);
+        if (st != 5) { if (st == 1 || st == 2) { Q.phase = PH_PULL; Q.t_phase = Q.t; } else if (Q.t - Q.t_phase > 20) Q.phase = PH_DONE; break; }
+        if (!Q.qb) break;
+        double depth = (Q.qbx - Q.los_x) * Q.fwd;
+        if (depth > -5) break;                                  // past the line: just run
+        if (Q.t - Q.t_phase < 15) break;
+        double score, open;
+        int r = pick_receiver(&score, &open);
+        if (r >= 0 && open > 55) {
+            // touch the QB himself: the scramble mod puts him back into aiming
+            rb_vf.room_x = Q.qbx; rb_vf.room_y = Q.qby;
+            finger(1, P0X, P0Y);
+            Q.phase = PH_PULL; Q.t_phase = Q.t;
+            rb_log("cpuqb: pulling up to throw on the run (open %.0f)", open);
         }
         break;
     }

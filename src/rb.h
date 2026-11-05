@@ -56,6 +56,8 @@ enum { OBJ_BALL = 3, OBJ_CONTROLLER = 44, OBJ_MASTER = 88, OBJ_PLAYER = 117, OBJ
 #define SLOT_DOWN            0x100fa4b48ULL
 #define SLOT_SCRIMMAGE       0x100faece8ULL
 #define SLOT_KICKING         0x100fa6308ULL
+#define SLOT_YARDS           0x100fb06e8ULL
+#define SLOT_X_YARDS         0x100fb0578ULL
 #define SLOT_JDIR            0x100fa6238ULL
 #define SLOT_JFORCE          0x100fa6258ULL
 
