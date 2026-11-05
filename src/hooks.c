@@ -2,6 +2,7 @@
 #include "rb.h"
 #include "ui.h"
 #include "sys.h"
+#include "input.h"
 
 enum {
 #define HOOK(name, va, insn) HK_##name,
@@ -79,6 +80,7 @@ int rb_gate_attack(CInstance *self, int human_has_ball) {
 // =============================================================== diagnostics
 // game's own debug log (slog) -> rbmod.log
 RValue *hook_slog(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
+    rb_input_install();
     char line[400]; int n = 0;
     for (int i = 0; i < argc && i < 6 && n < (int)sizeof line - 80; i++) {
         char b[48];
@@ -95,6 +97,26 @@ RValue *hook_action_result(CInstance *self, CInstance *other, RValue *res, int a
            rb_get_obj_real(OBJ_CONTROLLER, SLOT_POSSESSION), RB_CALLER());
     RValue *r = ORIG(action_result)(self, other, res, argc, argv);
     rb_log("action_result done: possession %g", rb_get_obj_real(OBJ_CONTROLLER, SLOT_POSSESSION));
+    return r;
+}
+
+// per-step ball update: frame counter, input logging only while a play is live, state changes
+static double g_last_state = -1;
+RValue *hook_update_ball(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
+    rb_frame++;
+    double st = rb_get_inst_real(self, SLOT_STATE);
+    rb_input_log = 1;
+    if (st != g_last_state) {
+        rb_log("ball f%u %p state %g -> %g  pos %.1f,%.1f dir %.1f vel %.2f zvel %.2f drag %.1f,%.1f dist %.1f touch %.1f,%.1f",
+               rb_frame, (void *)self, g_last_state, st,
+               rb_get_builtin_real(self, SLOT_X), rb_get_builtin_real(self, SLOT_Y),
+               rb_get_builtin_real(self, SLOT_DIRECTION), rb_get_inst_real(self, SLOT_VELOCITY),
+               rb_get_inst_real(self, SLOT_ZVEL), rb_get_inst_real(self, SLOT_DRAGX),
+               rb_get_inst_real(self, SLOT_DRAGY), rb_get_inst_real(self, SLOT_DRAGDIST),
+               rb_get_inst_real(self, SLOT_XTOUCH), rb_get_inst_real(self, SLOT_YTOUCH));
+        g_last_state = st;
+    }
+    RValue *r = ORIG(update_ball)(self, other, res, argc, argv);
     return r;
 }
 

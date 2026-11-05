@@ -81,6 +81,15 @@ double rb_get_inst_real(CInstance *inst, uint64_t slot_va) {
     return rb_rv_real(v);
 }
 
+typedef void (*fn_get_builtin)(CInstance *self, int slot, int arr, RValue *out);
+double rb_get_builtin_real(CInstance *inst, uint64_t slot_va) {
+    if (!inst) return -9999.0;
+    RValue out = {0};
+    out.kind = RV_UNDEFINED;
+    ((fn_get_builtin)RB(VA_GET_BUILTIN))(inst, rb_slot(slot_va), (int)0x80000000, &out);
+    return out.kind == RV_UNDEFINED ? -9999.0 : rb_rv_real(&out);
+}
+
 void rb_set_obj_real(int object_index, uint64_t slot_va, double val) {
     RValue ref = rb_obj_ref(object_index);
     RValue v = {0};

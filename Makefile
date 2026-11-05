@@ -2,7 +2,7 @@
 #  - On macOS with Xcode (GitHub Actions):  make
 #  - On Linux with clang + ld64.lld:         make LINUX=1   (links against tools/libSystem.tbd)
 
-SRC     := src/rb_runtime.c src/hooks.c src/ui.c
+SRC     := src/rb_runtime.c src/hooks.c src/ui.c src/input.c
 OUT     := build/libRBMod.dylib
 INSTALL := @executable_path/Frameworks/libRBMod.dylib
 CFLAGS  := -O2 -Wall -Wextra -Wno-unused-parameter -fno-stack-protector -fvisibility=hidden -fblocks
@@ -19,7 +19,7 @@ OBJ := $(SRC:src/%.c=build/%.o)
 
 all: $(OUT)
 
-build/%.o: src/%.c src/rb.h src/sys.h src/ui.h src/hooks.def
+build/%.o: src/%.c src/rb.h src/sys.h src/ui.h src/input.h src/hooks.def
 	@mkdir -p build
 	$(CC) $(CFLAGS) -c $< -o $@
 

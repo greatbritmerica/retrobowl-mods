@@ -44,6 +44,15 @@ enum { OBJ_BALL = 3, OBJ_CONTROLLER = 44, OBJ_MASTER = 88, OBJ_PLAYER = 117, OBJ
 #define SLOT_OFFENSE         0x100fa70f8ULL
 #define SLOT_X               0x100fb07e8ULL
 #define SLOT_Y               0x100fb0808ULL
+#define SLOT_DIRECTION       0x100fb0a98ULL
+#define SLOT_VELOCITY        0x100fb02d8ULL
+#define SLOT_ZVEL            0x100fb07b8ULL
+#define SLOT_DRAGDIST        0x100fa4c28ULL
+#define SLOT_DRAGX           0x100fa4c38ULL
+#define SLOT_DRAGY           0x100fa4c48ULL
+#define SLOT_XTOUCH          0x100fb0638ULL
+#define SLOT_YTOUCH          0x100fb0788ULL
+#define SLOT_MY_THROW_POWER  0x100fa6d98ULL
 
 // ---------------------------------------------------------------- runtime functions
 #define VA_GET_INST_VAR   0x100bba9f0ULL  // (RValue* inst, slot, INT_MIN, RValue* out, 0, 0)
@@ -67,6 +76,7 @@ void   rb_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 RValue rb_obj_ref(int object_index);                       // RValue that refers to an object (kind 15)
 double rb_get_obj_real(int object_index, uint64_t slot_va); // object_index.var  (first instance)
 double rb_get_inst_real(CInstance *inst, uint64_t slot_va); // inst.var
+double rb_get_builtin_real(CInstance *inst, uint64_t slot_va); // inst.x, inst.direction ...
 void   rb_set_obj_real(int object_index, uint64_t slot_va, double v);
 double rb_rv_real(RValue *v);
 const char *rb_rv_str(RValue *v, char *buf, int n);   // printable form of any value
