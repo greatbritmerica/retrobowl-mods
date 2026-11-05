@@ -5,3 +5,4 @@
 // The first instruction must not be PC-relative (adr/adrp/b/bl/cbz/ldr literal).
 
 HOOK(change_possession, 0x10010aca8, "sub sp, sp, #0x150")
+HOOK(update_commentary, 0x1005ab618, "stp d11, d10, [sp, #-0x80]!")

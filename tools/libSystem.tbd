@@ -10,5 +10,6 @@ exports:
                    _snprintf, _vsnprintf, _fopen, _fclose, _fprintf, _fputs, _fflush, _fgets, _fread, _fwrite,
                    _getenv, _time, _malloc, _calloc, _free, _arc4random, _arc4random_uniform,
                    _atan2, _sqrt, _sin, _cos, _fabs, _floor, _ceil, _fmod, _pow, _hypot,
-                   dyld_stub_binder ]
+                   __NSConcreteGlobalBlock, __NSConcreteStackBlock, __Block_copy, __Block_release,
+                   _dispatch_async, __dispatch_main_q, dyld_stub_binder ]
 ...
