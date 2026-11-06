@@ -16,7 +16,7 @@ int rb_cam3d_on = 1;
 #define CAM_HEIGHT  125.0     // eye height above the field
 #define CAM_AHEAD   240.0     // look this far downfield of the ball
 #define CAM_FOV     60.0
-// diagnostic A/B: cycles every 300 frames through {view box x4, x1.6} x {sky+bleachers on, off}
+// view box x4 + sky/bleachers on (cfg 0). The A/B speed test showed no difference between settings.
 int rb_cam3d_cfg;
 unsigned rb_spr_calls;
 #define VIEW_GROW   ((rb_cam3d_cfg & 2) ? 1.6 : 4.0)
@@ -185,7 +185,6 @@ void rb_cam3d_after(CInstance *self) {
                    cfgname[rb_cam3d_cfg & 3], g_t_frames && g_t_frame ? 24000000.0 * g_t_frames / (double)g_t_frame : 0,
                    g_t_draw / 300.0 / 24000.0, g_t_gui / 300.0 / 24000.0, g_t_world / 300.0 / 24000.0, g_t_sprites, rb_spr_calls / 300);
             g_t_gui = g_t_world = g_t_draw = 0; g_t_n = 0; g_t_frame = 0; g_t_frames = 0; rb_spr_calls = 0;
-            rb_cam3d_cfg = (rb_cam3d_cfg + 1) & 3;
         }
         g_t_after_end = mach_absolute_time();
     }
