@@ -181,13 +181,13 @@ void hook_camera_step2(CInstance *self, CInstance *other) {     // obj_camera En
     rb_cam3d_after(self);
 }
 
-// the stadium image (field + stands, one sprite) drawn at 0,0: on the ground minus the stands in 3D
-typedef void (*DrawSprFn)(CInstance *self, long sprite, int colour, float sub, float x, float y,
-                          float xs, float ys, float rot, float alpha);
-void call_stadium_draw(CInstance *self, long sprite, int colour, float sub, float x, float y,
-                       float xs, float ys, float rot, float alpha) {
-    if (rb_cam3d_stadium(self, sprite, colour, sub, x, y, xs, ys, alpha)) return;
-    ((DrawSprFn)RB(0x1008d91ccULL))(self, sprite, colour, sub, x, y, xs, ys, rot, alpha);
+// every sprite draw (draw_sprite_ext's engine routine): in 3D the crowd strips are stood up as bleachers
+long hook_spr_draw(CInstance *self, long sprite, int colour, float sub, float x, float y,
+                   float xs, float ys, float rot, float alpha) {
+    RbDrawSprFn orig = (RbDrawSprFn)RB_TRAMP(HK_spr_draw);
+    if (!rb_cam3d_in_gui_pass && rb_cam3d_on && rb_cam3d_active())
+        return rb_cam3d_spr_draw(orig, self, sprite, colour, sub, x, y, xs, ys, rot, alpha);
+    return orig(self, sprite, colour, sub, x, y, xs, ys, rot, alpha);
 }
 
 // =============================================================== player control on defense

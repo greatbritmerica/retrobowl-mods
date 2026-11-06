@@ -10,5 +10,8 @@ void rb_cam3d_gui_pass(CInstance *self, void (*draw_player)(CInstance *), void (
 int  rb_cam3d_hit_player(double gx, double gy, double *rx, double *ry);
 double rb_cam3d_fwd(void);
 void rb_cam3d_rotate_drag(double dx, double dy, double *ox, double *oy);
-int  rb_cam3d_stadium(CInstance *self, long sprite, int colour, float sub, float x, float y, float xs, float ys, float alpha);
+typedef long (*RbDrawSprFn)(CInstance *self, long sprite, int colour, float sub, float x, float y,
+                            float xs, float ys, float rot, float alpha);
+long rb_cam3d_spr_draw(RbDrawSprFn orig, CInstance *self, long sprite, int colour, float sub, float x, float y,
+                       float xs, float ys, float rot, float alpha);
 int  rb_cam3d_handoff_target(double gx, double gy, double *rx, double *ry);

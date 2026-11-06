@@ -18,7 +18,8 @@ HOOK(camera_step2, 0x1006c1df8, "stp d13, d12, [sp, #-0x90]!")
 HOOK(controller_gui, 0x1006e05c8, "stp d9, d8, [sp, #-0x70]!")
 HOOK(ball_draw, 0x10068dc68, "sub sp, sp, #0x1c0")
 HOOK(fieldtxt_draw, 0x1006f1a48, "stp d13, d12, [sp, #-0x90]!")
+HOOK(spr_draw, 0x1008d91cc, "sub sp, sp, #0x90")
 
 // Call-site redirects:  CALLSITE(name, bl_site_va, original_target_va)
 // In C define call_<name> with the target's exact signature and call the original via RB(target).
-CALLSITE(stadium_draw, 0x1004792b8, 0x1008d91cc)
+// (none at the moment)
