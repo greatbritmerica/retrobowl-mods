@@ -125,10 +125,40 @@ static void lead_point(int i, double *lx, double *ly, double *speed) {
     *lx = x; *ly = y; *speed = v;
 }
 
-// best receiver right now; returns index or -1. *open_out = separation at the catch point
+// Defenders react once the ball is up: assume each keeps his momentum for part of the flight and
+// then gains DEF_CLOSE px/frame on the ball. Clearance = how far the nearest one still is.
+#define DEF_CLOSE  0.55
+#define SAFE_OPEN  22.0       // clearance needed to call a man open
+#define LANE_MIN   14.0       // clearance needed along the catchable part of the flight
+
+static double clearance_at(double bx, double by, double t) {
+    double best = 1e9;
+    for (int i = 0; i < Q.ndf; i++) {
+        if (!Q.df[i].seen) continue;
+        double px = Q.df[i].x + Q.df[i].vx * t * 0.4, py = Q.df[i].y + Q.df[i].vy * t * 0.4;
+        double d = hypot(px - bx, py - by) - DEF_CLOSE * t;
+        if (d < best) best = d;
+    }
+    return best;
+}
+
+// worst clearance over the low (catchable) part of the flight toward lx,ly at speed v
+static double lane_clearance(double lx, double ly, double v) {
+    double dx = lx - Q.qbx, dy = ly - Q.qby, len = hypot(dx, dy);
+    if (len < 1) return 1e9;
+    double ux = dx / len, uy = dy / len, T = AIR_K * v, worst = 1e9;
+    for (double f = 0.55; f < 0.96; f += 0.1) {
+        double t = f * T, sd = v * (1.0 - pow(DRAG_DECAY, t)) / (1.0 - DRAG_DECAY);
+        double c = clearance_at(Q.qbx + ux * sd, Q.qby + uy * sd, t);
+        if (c < worst) worst = c;
+    }
+    return worst;
+}
+
+// best receiver right now; returns index or -1. *open_out = min(catch, lane) clearance
 static int pick_receiver(double *score_out, double *open_out) {
     int best = -1;
-    double best_score = -1e9, best_open = 0;
+    double best_score = -1e9, best_open = -1e9;
     for (int i = 0; i < Q.nof; i++) {
         Track *r = &Q.of[i];
         if (!r->seen || r->inst == Q.qb) continue;
@@ -139,9 +169,11 @@ static int pick_receiver(double *score_out, double *open_out) {
         lead_point(i, &lx, &ly, &v);
         if (v / Q.k > DRAG_MAX) continue;                   // out of range
         double T = AIR_K * v;
-        double open = nearest_def(lx, ly, T * 0.7);
+        double at_catch = clearance_at(lx, ly, T);
+        double lane = lane_clearance(lx, ly, v);
+        double open = at_catch < lane + (SAFE_OPEN - LANE_MIN) ? at_catch : lane + (SAFE_OPEN - LANE_MIN);
         double gain = (lx - Q.los_x) * Q.fwd;
-        double score = open + gain * (Q.deep ? 0.30 : 0.12) - (open < 30 ? 60 : 0) + frand() * 12;
+        double score = open + gain * (Q.deep ? 0.30 : 0.12) - (open < SAFE_OPEN ? 80 : 0) + frand() * 10;
         if (Q.down >= 3 && gain < Q.yards * 20 - 20) score -= 25;   // short of the sticks on 3rd/4th
         if (score > best_score) { best_score = score; best = i; best_open = open; }
     }
@@ -273,7 +305,7 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         double score, open;
         int r = pick_receiver(&score, &open);
         int go = 0;
-        if (!Q.scrambled && held > 20 && pressure < 70 && open < 40) {       // pocket collapsing, nobody open
+        if (!Q.scrambled && held > 20 && pressure < 70 && open < SAFE_OPEN) {       // pocket collapsing, nobody open
             double lane = nearest_def(Q.qbx + Q.fwd * 80, Q.qby, 10);
             if (lane > 55 && frand() < 0.08) {                              // checked every frame -> ~quickly
                 Q.phase = PH_SCRAMBLE_GO; Q.hold = 0; Q.scrambled = 1;
@@ -282,8 +314,9 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
             }
         }
         if (pressure < 45 && held > 8) go = 1;                              // about to be hit
-        else if (held >= Q.read_frames && r >= 0 && open > 40) go = 1;      // open man
+        else if (held >= Q.read_frames && r >= 0 && open > SAFE_OPEN) go = 1;   // open man
         else if (held >= Q.read_frames + 70) go = 1;                        // out of time
+        if (go && r >= 0 && open < SAFE_OPEN * 0.4) r = -1;                 // nothing safe: throw it away
         if (go && r >= 0) {
             Q.tgt = r; Q.phase = PH_AIM; Q.hold = 0;
             rb_log("cpuqb: throw to #%d open %.0f pressure %.0f after %u frames", r, open, pressure, held);
@@ -298,7 +331,10 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         if (st != 2) { Q.phase = PH_DONE; finger(0, P0X, P0Y); break; }
         double lx, ly, v;
         if (Q.tgt >= 0 && Q.of[Q.tgt].seen) lead_point(Q.tgt, &lx, &ly, &v);
-        else { lx = Q.qbx + Q.fwd * 420; ly = Q.qby + (Q.qby < 300 ? -260 : 260); v = 9; }   // sideline, deep
+        else {                                                  // throw-away: hard to the near sideline
+            lx = Q.qbx + Q.fwd * 110; ly = Q.qby + (Q.qby < 300 ? -320 : 320);
+            v = speed_for_range(hypot(lx - Q.qbx, ly - Q.qby) * 1.25);
+        }
         double dx = lx - Q.qbx, dy = ly - Q.qby, len = hypot(dx, dy);
         if (len < 1) len = 1;
         double drag = v / Q.k;
@@ -331,7 +367,7 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         if (Q.t - Q.t_phase < 15) break;
         double score, open;
         int r = pick_receiver(&score, &open);
-        if (r >= 0 && open > 55) {
+        if (r >= 0 && open > SAFE_OPEN + 15) {
             // touch the QB himself: the scramble mod puts him back into aiming
             rb_vf.room_x = Q.qbx; rb_vf.room_y = Q.qby;
             finger(1, P0X, P0Y);
