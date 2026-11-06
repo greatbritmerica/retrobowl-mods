@@ -198,11 +198,17 @@ void hook_ball_draw(CInstance *self, CInstance *other) {
     ORIG_EV(ball_draw)(self, other);
 }
 
+void hook_fieldtxt_draw(CInstance *self, CInstance *other) {
+    if (rb_cam3d_active() && !rb_cam3d_in_gui_pass) return;
+    ORIG_EV(fieldtxt_draw)(self, other);
+}
+
+static void gui_draw_text(CInstance *t) { hook_fieldtxt_draw(t, t); }
 static void gui_draw_player(CInstance *p) { hook_player_draw(p, p); }
 static void gui_draw_ball(CInstance *b) { hook_ball_draw(b, b); }
 
 void hook_controller_gui(CInstance *self, CInstance *other) {
-    rb_cam3d_gui_pass(self, gui_draw_player, gui_draw_ball);      // standing players + sky, under the HUD
+    rb_cam3d_gui_pass(self, gui_draw_player, gui_draw_ball, gui_draw_text);      // standing players + sky, under the HUD
     ORIG_EV(controller_gui)(self, other);
 }
 

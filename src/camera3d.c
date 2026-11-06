@@ -106,6 +106,8 @@ static int focus_pos(CInstance *self, double *x, double *y) {
     return 1;
 }
 
+void rb_cam3d_log_layers(CInstance *self);
+
 // before the game's camera update: give it back its own view box
 void rb_cam3d_before(CInstance *self) {
     if (!rb_cam3d_on || !C.valid) return;
@@ -127,6 +129,7 @@ void rb_cam3d_after(CInstance *self) {
         rb_log("cam3d: call %u cam %g view %.0f,%.0f %.0fx%.0f fns %p %p %p dir %g", calls, cam, x, y, w, h,
                fn("matrix_build_lookat"), fn("camera_set_view_mat"), fn("matrix_build_projection_perspective_fov"), drive_dir());
     if (!(w > 1 && h > 1)) return;
+    if (!C.valid) rb_cam3d_log_layers(self);
     C.gx = x; C.gy = y; C.gw = w; C.gh = h; C.valid = 1; g_reads_since_update = 0;
     double cx = x + w / 2, cy = y + h / 2, fwd = drive_dir();
     double bx, by;
@@ -206,17 +209,22 @@ static int project(double wx, double wy, double gw, double gh, double *sx, doubl
     return 1;
 }
 
-typedef struct { CInstance *inst; double depth, sx, sy, scale; int is_ball; } Spr;
+typedef struct { CInstance *inst; double depth, sx, sy, scale; int is_ball; } Spr;   // is_ball: 0 player, 1 ball, 2 field text
 typedef struct { Spr *s; int n, cap, is_ball; double gw, gh; } SprList;
+
+#define SCALE_MAX 2.4      // players right under the camera don't get huge
+#define NEAR_CULL 40.0
+static Spr g_last[48]; static int g_nlast; static double g_last_gw, g_last_gh;   // last frame's standing players (for taps)
 static int spr_cb(CInstance *inst, void *ctx) {
     SprList *L = ctx;
     if (L->n >= L->cap) return 1;
     double x = rb_get_builtin_real(inst, SLOT_X), y = rb_get_builtin_real(inst, SLOT_Y), sx, sy, z;
-    if (x < -9000 || !project(x, y, L->gw, L->gh, &sx, &sy, &z)) return 0;
+    if (x < -9000 || !project(x, y, L->gw, L->gh, &sx, &sy, &z) || z < NEAR_CULL) return 0;
     if (sx < -200 || sx > L->gw + 200 || sy < -200 || sy > L->gh + 400) return 0;
     Spr *p = &L->s[L->n++];
     p->inst = inst; p->depth = z; p->sx = sx; p->sy = sy; p->is_ball = L->is_ball;
     p->scale = (L->gh / 2) / (z * C.tan_half);
+    if (p->scale > SCALE_MAX) p->scale = SCALE_MAX;
     return 0;
 }
 
@@ -239,7 +247,7 @@ static void reset_world(CInstance *self) {
     rvfree(&id);
 }
 
-void rb_cam3d_gui_pass(CInstance *self, void (*draw_player)(CInstance *), void (*draw_ball)(CInstance *)) {
+void rb_cam3d_gui_pass(CInstance *self, void (*draw_player)(CInstance *), void (*draw_ball)(CInstance *), void (*draw_text)(CInstance *)) {
     if (!rb_cam3d_active()) return;
     double gw = callreal("display_get_gui_width", self, 0, 0, 0), gh = callreal("display_get_gui_height", self, 0, 0, 0);
     if (!(gw > 1 && gh > 1)) return;
@@ -257,9 +265,14 @@ void rb_cam3d_gui_pass(CInstance *self, void (*draw_player)(CInstance *), void (
     SprList L = { buf, 0, 48, 0, gw, gh };
     RValue r = rb_obj_ref(OBJ_PLAYER);
     if (rb_obj_exists(OBJ_PLAYER)) rb_with(&r, self, self, spr_cb, &L);
+    int nplayers = L.n;
     L.is_ball = 1;
     r = rb_obj_ref(OBJ_BALL);
     if (rb_obj_exists(OBJ_BALL)) rb_with(&r, self, self, spr_cb, &L);
+    L.is_ball = 2;
+    r = rb_obj_ref(59);                                    // obj_fieldtxt ("GET READY!", names)
+    if (rb_obj_exists(59)) rb_with(&r, self, self, spr_cb, &L);
+    memcpy(g_last, buf, sizeof(Spr) * nplayers); g_nlast = nplayers; g_last_gw = gw; g_last_gh = gh;
     for (int i = 1; i < L.n; i++) {                      // far to near
         Spr k = buf[i]; int j = i - 1;
         while (j >= 0 && buf[j].depth < k.depth) { buf[j + 1] = buf[j]; j--; }
@@ -270,7 +283,7 @@ void rb_cam3d_gui_pass(CInstance *self, void (*draw_player)(CInstance *), void (
         Spr *p = &buf[i];
         double x = rb_get_builtin_real(p->inst, SLOT_X), y = rb_get_builtin_real(p->inst, SLOT_Y);
         set_world(self, x, y, p->scale, p->sx, p->sy);
-        if (p->is_ball) draw_ball(p->inst); else draw_player(p->inst);
+        if (p->is_ball == 1) draw_ball(p->inst); else if (p->is_ball == 2) draw_text(p->inst); else draw_player(p->inst);
     }
     reset_world(self);
     rb_cam3d_in_gui_pass = 0;
@@ -284,4 +297,42 @@ void rb_cam3d_rotate_drag(double dx, double dy, double *ox, double *oy) {
     double f = rb_cam3d_fwd();
     *ox = -f * dy;
     *oy = f * dx;
+}
+
+// a tap on a standing player's body counts as a tap on that player (feet position)
+int rb_cam3d_hit_player(double gx, double gy, double *rx, double *ry) {
+    if (!rb_cam3d_active()) return 0;
+    int best = -1; double bd = 1e9;
+    for (int i = 0; i < g_nlast; i++) {
+        Spr *p = &g_last[i];
+        double hw = 11 * p->scale, top = 30 * p->scale, bot = 5 * p->scale;
+        if (gx < p->sx - hw || gx > p->sx + hw || gy < p->sy - top || gy > p->sy + bot) continue;
+        if (p->depth < bd) { bd = p->depth; best = i; }          // front-most
+    }
+    if (best < 0) return 0;
+    *rx = rb_get_builtin_real(g_last[best].inst, SLOT_X);
+    *ry = rb_get_builtin_real(g_last[best].inst, SLOT_Y);
+    return *rx > -9000;
+}
+
+// once per match: log the room's layers (to find the crowd/stands)
+static void *fnp(const char *n) { return fn(n); }
+void rb_cam3d_log_layers(CInstance *self) {
+    RValue all; callrv(fnp("layer_get_all"), self, 0, 0, &all);
+    RValue a1[1] = { all }, n;
+    callrv(fnp("array_length"), self, 1, a1, &n);
+    int cnt = (int)rb_rv_real(&n);
+    rb_log("cam3d: %d layers", cnt);
+    for (int i = 0; i < cnt && i < 60; i++) {
+        RValue ga[2] = { all, R(i) }, id, nm, dp, vis;
+        callrv(fnp("array_get"), self, 2, ga, &id);
+        RValue ia[1] = { id };
+        callrv(fnp("layer_get_name"), self, 1, ia, &nm);
+        callrv(fnp("layer_get_depth"), self, 1, ia, &dp);
+        callrv(fnp("layer_get_visible"), self, 1, ia, &vis);
+        char b[64];
+        rb_log("cam3d: layer %g \"%s\" depth %g visible %g", rb_rv_real(&id), rb_rv_str(&nm, b, sizeof b), rb_rv_real(&dp), rb_rv_real(&vis));
+        rvfree(&nm);
+    }
+    rvfree(&all);
 }
