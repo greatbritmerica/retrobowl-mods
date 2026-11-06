@@ -122,7 +122,23 @@ RValue *hook_update_ball(CInstance *self, CInstance *other, RValue *res, int arg
                cpu_offense ? "[CPU ball]" : "");
         g_last_state = st;
     }
-    return ORIG(update_ball)(self, other, res, argc, argv);
+    // kick recorder: log kick meter changes (human or CPU) and the inputs around them
+    static double last_kp = -1, last_dir = -1; static unsigned last_kick_log;
+    double kp = rb_get_inst_real(self, SLOT_KICKPOW), dr = rb_get_inst_real(self, SLOT_DIREC);
+    if ((kp != last_kp || dr != last_dir) && kp > -9000 && rb_frame - last_kick_log >= 3) {
+        rb_log("kick f%u state %g kickpow %.3f direc %.2f flip %g", rb_frame, st, kp, dr, rb_get_inst_real(self, SLOT_KICKFLIP));
+        last_kp = kp; last_dir = dr; last_kick_log = rb_frame;
+        rb_input_log = 1;
+    } else if (rb_frame - last_kick_log > 120) rb_input_log = 0;
+
+    RValue *r = ORIG(update_ball)(self, other, res, argc, argv);
+    if (rb_cpuqb_punt_pending) {                                 // CPU chose to punt: same as tapping "yes"
+        rb_cpuqb_punt_pending = 0;
+        RValue pr = {0}; pr.kind = RV_UNDEFINED;
+        rb_log("cpuqb: punting");
+        ((GMLScript)RB(0x100094060ULL))(self, other, &pr, 0, 0);   // gml_Script_btn_response_punt_yes
+    }
+    return r;
 }
 
 // =============================================================== player control on defense

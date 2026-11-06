@@ -19,7 +19,7 @@
 #define P0X          400.0      // where the finger goes down (GUI)
 #define P0Y          190.0
 
-enum { PH_IDLE, PH_PRESNAP, PH_HANDOFF, PH_PULL, PH_READ, PH_AIM, PH_SCRAMBLE_GO, PH_SCRAMBLE, PH_DONE };
+enum { PH_IDLE, PH_PRESNAP, PH_HANDOFF, PH_PULL, PH_READ, PH_AIM, PH_SCRAMBLE_GO, PH_SCRAMBLE, PH_KICK_TAP, PH_FG, PH_DONE };
 
 typedef struct { CInstance *inst; double x, y, vx, vy; int seen; } Track;
 
@@ -37,7 +37,12 @@ static struct {
     double aim_x, aim_y, drag;
     double k, mtp;                // this QB: ball speed per pixel of drag, his my_throw_power
     int measured;
+    int fourth_done, fg_peak_frames; double fg_last_pow;
+    double btn_x, btn_y;
 } Q;
+
+int rb_cpuqb_punt_pending;     // hooks.c performs the punt after the ball update returns
+static int g_fg_pending;       // CPU tapped the field goal button; survives the kick set-up
 
 static double g_k_per_mtp;       // speed-per-drag / my_throw_power, measured from a real throw
 
@@ -202,6 +207,10 @@ static void new_play(CInstance *ball) {
     Q.ball = ball;
     Q.phase = PH_PRESNAP;
     Q.tgt = -1;
+    if (g_fg_pending) {                    // field goal formation: go straight to the kick
+        Q.phase = PH_FG; Q.fwd = 1; Q.fg_last_pow = -1;
+        rb_log("cpuqb: field goal set up");
+    }
 }
 
 static void finger(int down, double gx, double gy) {
@@ -211,11 +220,12 @@ static void finger(int down, double gx, double gy) {
 void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
     rb_vf_frame();
     double st = rb_get_inst_real(ball, SLOT_STATE);
-    if (!cpu_offense) { rb_vf.active = 0; Q.phase = PH_IDLE; Q.ball = 0; return; }
+    if (!cpu_offense) { rb_vf.active = 0; Q.phase = PH_IDLE; Q.ball = 0; g_fg_pending = 0; return; }
     if (ball != Q.ball) new_play(ball);
 
     // virtual finger owns the input while the CPU's play is live
-    int live = (st == 0 || st == 1 || st == 2 || st == 3 || st == 5 || st == 13 || st == 18 || st == 19);
+    int live = (st == 0 || st == 1 || st == 2 || st == 3 || st == 5 || st == 13 || st == 18 || st == 19)
+               || Q.phase == PH_KICK_TAP || Q.phase == PH_FG;
     rb_vf.active = live;
     if (!live) { rb_vf.down = 0; return; }
 
@@ -258,6 +268,27 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
     case PH_PRESNAP:
         finger(0, P0X, P0Y);
         if (st != 0 || Q.t < Q.t_phase) break;
+        if (Q.down >= 4 && !Q.fourth_done) {                    // 4th down: kick or go for it
+            Q.fourth_done = 1;
+            CInstance *btn = 0;
+            RValue br = rb_obj_ref(OBJ_BTN_FIELDGOAL);
+            rb_with(&br, ball, other, grab_first, &btn);
+            if (btn) {
+                char b[48];
+                const char *txt = rb_rv_str(rb_inst_var(btn, SLOT_TXT), b, sizeof b);
+                int punt = strstr(txt, "unt") || strstr(txt, "UNT");
+                int go = Q.yards > 0 && Q.yards <= 1.2 && frand() < (punt ? 0.25 : 0.35);
+                rb_log("cpuqb: 4th and %g, button \"%s\" -> %s", Q.yards, txt, go ? "GO FOR IT" : punt ? "PUNT" : "FIELD GOAL");
+                if (!go && punt) { rb_cpuqb_punt_pending = 1; Q.phase = PH_DONE; break; }
+                if (!go) {
+                    double bx = rb_get_builtin_real(btn, SLOT_X), by = rb_get_builtin_real(btn, SLOT_Y);
+                    Q.btn_x = bx + rb_get_builtin_real(btn, SLOT_SPRITE_WIDTH) / 2;
+                    Q.btn_y = by + rb_get_builtin_real(btn, SLOT_SPRITE_HEIGHT) / 2;
+                    Q.phase = PH_KICK_TAP; Q.t_phase = Q.t;
+                    break;
+                }
+            } else rb_log("cpuqb: 4th down but no kick button");
+        }
         if (Q.is_run) {
             int rb = find_rb();
             if (rb >= 0) {
@@ -348,6 +379,26 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
             Q.phase = PH_DONE;
             rb_log("cpuqb: release toward %.0f,%.0f drag %.0f (qb %.0f,%.0f)", lx, ly, drag, Q.qbx, Q.qby);
         }
+        break;
+    }
+
+    case PH_KICK_TAP:                                           // tap the field goal button
+        finger(Q.t - Q.t_phase < 3, Q.btn_x, Q.btn_y);
+        if (Q.t - Q.t_phase >= 4) { Q.phase = PH_FG; Q.t_phase = Q.t; Q.fg_last_pow = -1; Q.fg_peak_frames = 0; g_fg_pending = 1; }
+        break;
+
+    case PH_FG: {                                               // experimental: hold, release at peak power
+        unsigned t = Q.t - Q.t_phase;
+        double pow_ = rb_get_inst_real(ball, SLOT_KICKPOW), dir = rb_get_inst_real(ball, SLOT_DIREC);
+        if (t % 5 == 0)
+            rb_log("cpuqb: fg t%u state %g kickpow %.2f direc %.1f flip %g", t, st, pow_, dir,
+                   rb_get_inst_real(ball, SLOT_KICKFLIP));
+        if (t < 20) { finger(0, P0X, P0Y); break; }            // let the kick set up
+        if (pow_ <= Q.fg_last_pow + 1e-6 && Q.fg_last_pow > 0) Q.fg_peak_frames++; else Q.fg_peak_frames = 0;
+        Q.fg_last_pow = pow_;
+        int hold = t < 200 && Q.fg_peak_frames < 3;
+        finger(hold, P0X, P0Y);
+        if (!hold) { rb_log("cpuqb: fg release at kickpow %.2f direc %.1f", pow_, dir); Q.phase = PH_DONE; g_fg_pending = 0; }
         break;
     }
 

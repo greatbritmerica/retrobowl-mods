@@ -30,7 +30,7 @@ typedef RValue *(*GMLScript)(CInstance *self, CInstance *other, RValue *result, 
 typedef void (*GMLEvent)(CInstance *self, CInstance *other);
 
 // object indices (game.ios OBJT)
-enum { OBJ_BALL = 3, OBJ_CONTROLLER = 44, OBJ_MASTER = 88, OBJ_PLAYER = 117, OBJ_PLAYER_DF = 118, OBJ_PLAYER_OF = 119 };
+enum { OBJ_BTN_FIELDGOAL = 16, OBJ_BALL = 3, OBJ_CONTROLLER = 44, OBJ_MASTER = 88, OBJ_PLAYER = 117, OBJ_PLAYER_DF = 118, OBJ_PLAYER_OF = 119 };
 
 // variable slot records ({int32 runtime id} at these VAs)
 #define SLOT_POSSESSION      0x100fa7668ULL
@@ -58,6 +58,13 @@ enum { OBJ_BALL = 3, OBJ_CONTROLLER = 44, OBJ_MASTER = 88, OBJ_PLAYER = 117, OBJ
 #define SLOT_KICKING         0x100fa6308ULL
 #define SLOT_YARDS           0x100fb06e8ULL
 #define SLOT_X_YARDS         0x100fb0578ULL
+#define SLOT_TXT             0x100fafe18ULL
+#define SLOT_SPRITE_WIDTH    0x100fb07f8ULL
+#define SLOT_SPRITE_HEIGHT   0x100fb0818ULL
+#define SLOT_KICKPOW         0x100fa6328ULL
+#define SLOT_DIREC           0x100fa4a08ULL
+#define SLOT_KICKFLIP        0x100fa62f8ULL
+#define SLOT_CPU_KICKPOW     0x100fa4558ULL
 #define SLOT_JDIR            0x100fa6238ULL
 #define SLOT_JFORCE          0x100fa6258ULL
 
