@@ -26,6 +26,8 @@ static V3 mul(V3 a, double k) { return v3(a.v[0]*k, a.v[1]*k, a.v[2]*k); }
 static V3 cross(V3 a, V3 b) { return v3(a.v[1]*b.v[2]-a.v[2]*b.v[1], a.v[2]*b.v[0]-a.v[0]*b.v[2], a.v[0]*b.v[1]-a.v[1]*b.v[0]); }
 static V3 norm(V3 a) { double l = sqrt(a.v[0]*a.v[0]+a.v[1]*a.v[1]+a.v[2]*a.v[2]); return l > 0 ? mul(a, 1/l) : a; }
 
+static struct { V3 at; int have; unsigned frame; } M;   // this frame's camera target
+
 static struct {
     int valid;
     double gx, gy, gw, gh;          // the game's own view box (restored before its next update)
@@ -35,7 +37,6 @@ static struct {
 
 extern uint64_t mach_absolute_time(void);
 static uint64_t g_t_frame; static unsigned g_t_frames;
-static struct { RValue look, view, proj; int have; unsigned frame; } M;   // this frame's matrices
 
 static void *fn(const char *name) {          // cached by the literal's address
     static const char *names[64]; static void *fns[64];
@@ -166,9 +167,9 @@ void rb_cam3d_after(CInstance *self) {
     RValue sv[2] = { R(cam), view }, sp[2] = { R(cam), proj };
     callrv(fn("camera_set_view_mat"), self, 2, sv, &tmp); rvfree(&tmp);
     callrv(fn("camera_set_proj_mat"), self, 2, sp, &tmp); rvfree(&tmp);
-    rvfree(&flat);
-    if (M.have) { rvfree(&M.look); rvfree(&M.view); rvfree(&M.proj); }
-    M.look = look; M.view = view; M.proj = proj; M.have = 1;          // kept for the world pass (sky, bleachers)
+    rvfree(&look); rvfree(&flat); rvfree(&view); rvfree(&proj);
+    // (GML arrays are garbage-collected: never keep one past this call; the world pass rebuilds what it needs)
+    M.at = at; M.have = 1;
     M.frame++;
     {                                                                  // frame timing
         static uint64_t last; uint64_t now = mach_absolute_time();
@@ -372,13 +373,16 @@ static struct {
     double top_fold, bot_fold;        // hinge lines (from the last frame's strips)
     double cur_top, cur_bot;
     int rs;                           // rotation sign that tilts the crowd up (toward -z)
-    RValue ident; int have_ident;
     int nlog;
-} B = { 0, 0, 0, 2 * FIELD_H, -1e9, 1e9, -1e9, 1e9, 0, {{0}}, 0, 0 };
+} B = { 0, 0, 0, 2 * FIELD_H, -1e9, 1e9, -1e9, 1e9, 0, 0 };
 
 static void mset(CInstance *self, int which, RValue m) {
     RValue a[2] = { R(which), m }, t;
     callrv(fn("matrix_set"), self, 2, a, &t); rvfree(&t);
+}
+static void mget(CInstance *self, int which, RValue *out) {
+    RValue a[1] = { R(which) };
+    callrv(fn("matrix_get"), self, 1, a, out);
 }
 static RValue mbuild(CInstance *self, double x, double y, double z, double rx, double sx, double sy, double sz) {
     RValue a[9] = { R(x), R(y), R(z), R(rx), R(0), R(0), R(sx), R(sy), R(sz) }, m;
@@ -399,13 +403,16 @@ static void draw_sky(CInstance *self) {
     callrv(fn("matrix_build_lookat"), self, 9, la, &v2);
     RValue po[4] = { R(gw), R(gh), R(1), R(32000) };
     callrv(fn("matrix_build_projection_ortho"), self, 4, po, &p2);
-    if (v2.kind == RV_UNDEFINED || p2.kind == RV_UNDEFINED) { rvfree(&v2); rvfree(&p2); return; }
+    RValue sv, sp; mget(self, 0, &sv); mget(self, 1, &sp);
+    if (v2.kind == RV_UNDEFINED || p2.kind == RV_UNDEFINED || sv.kind == RV_UNDEFINED || sp.kind == RV_UNDEFINED) {
+        rvfree(&v2); rvfree(&p2); rvfree(&sv); rvfree(&sp); return;
+    }
     mset(self, 0, v2); mset(self, 1, p2);
     double top = 0xE0A060, low = 0xF8D8A8;            // BGR: sky blue -> pale at the horizon
     double a[9] = { 0, 0, gw, hy + 2, top, top, low, low, 0 };
     rb_call(fn("draw_rectangle_colour"), self, 9, a);
-    mset(self, 0, M.view); mset(self, 1, M.proj);
-    rvfree(&v2); rvfree(&p2);
+    mset(self, 0, sv); mset(self, 1, sp);
+    rvfree(&v2); rvfree(&p2); rvfree(&sv); rvfree(&sp);
 }
 
 static double array_real(CInstance *self, RValue arr, int i) {
@@ -442,7 +449,6 @@ long rb_cam3d_spr_draw(RbDrawSprFn orig, CInstance *self, long sprite, long colo
         CRUMB(4, "field drawn");
     } else {
         CRUMB(5, "crowd strip");
-        if (!B.have_ident) { callrv(fn("matrix_build_identity"), self, 0, 0, &B.ident); B.have_ident = 1; }
         if (!B.rs) {                                   // which way matrix_build turns (0,-1,0) up
             RValue m = mbuild(self, 0, 0, 0, STAND_ANGLE, 1, 1, 1), v;
             RValue tv[4] = { m, R(0), R(-1), R(0) };
@@ -461,13 +467,21 @@ long rb_cam3d_spr_draw(RbDrawSprFn orig, CInstance *self, long sprite, long colo
         RValue mm[2] = { m1, m2 }, w;
         callrv(fn("matrix_multiply"), self, 2, mm, &w);
         CRUMB(6, "hinge built");
-        mset(self, 0, M.look); mset(self, 2, w);
-        CRUMB(7, "matrices set");
-        r = orig(self, sprite, colour, sub, x, y, xs, ys, rot, alpha);
-        CRUMB(8, "strip drawn");
-        mset(self, 2, B.ident); mset(self, 0, M.view);
-        CRUMB(9, "restored");
-        rvfree(&m1); rvfree(&m2); rvfree(&w);
+        RValue la[9] = { R(C.eye.v[0]), R(C.eye.v[1]), R(C.eye.v[2]), R(M.at.v[0]), R(M.at.v[1]), R(M.at.v[2]), R(0), R(0), R(1) };
+        RValue look, oldv, oldw;
+        callrv(fn("matrix_build_lookat"), self, 9, la, &look);
+        mget(self, 0, &oldv); mget(self, 2, &oldw);
+        if (look.kind == RV_UNDEFINED || w.kind == RV_UNDEFINED || oldv.kind == RV_UNDEFINED || oldw.kind == RV_UNDEFINED) {
+            r = orig(self, sprite, colour, sub, x, y, xs, ys, rot, alpha);       // something missing: draw it flat
+        } else {
+            mset(self, 0, look); mset(self, 2, w);
+            CRUMB(7, "matrices set");
+            r = orig(self, sprite, colour, sub, x, y, xs, ys, rot, alpha);
+            CRUMB(8, "strip drawn");
+            mset(self, 2, oldw); mset(self, 0, oldv);
+            CRUMB(9, "restored");
+        }
+        rvfree(&m1); rvfree(&m2); rvfree(&w); rvfree(&look); rvfree(&oldv); rvfree(&oldw);
     }
     g_t_world += mach_absolute_time() - t0;
     return r;
