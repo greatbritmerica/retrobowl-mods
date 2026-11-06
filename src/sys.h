@@ -35,6 +35,7 @@ void *malloc(size_t n);
 void free(void *p);
 unsigned int arc4random_uniform(unsigned int upper);
 double atan2(double y, double x);
+double tan(double x);
 double sqrt(double x);
 double sin(double x);
 double cos(double x);

@@ -7,6 +7,7 @@
 #include "rb.h"
 #include "sys.h"
 #include "input.h"
+#include "camera3d.h"
 
 #define VA_THE_FUNCTIONS    0x1010926e8ULL
 #define VA_THE_FUNCTIONS_N  0x1010926f0ULL
@@ -71,6 +72,9 @@ static void note(const char *name, int argc, RValue *args, double val) {
     }
 }
 
+// with the 3D camera on, "where on the field is the finger" has to go through the perspective
+static int cam3d_room(CInstance *self, int want_y, double *out);
+
 // ---------------------------------------------------------------- wrappers
 #define WRAP_FN(id)                                                                         \
     static BuiltinFn orig_##id;                                                             \
@@ -78,6 +82,8 @@ static void note(const char *name, int argc, RValue *args, double val) {
         double v;                                                                           \
         if (vf_value(#id, argc, args, &v)) { res->real = v; res->flags = 0; res->kind = RV_REAL; return; } \
         orig_##id(res, self, other, argc, args);                                            \
+        if ((!strcmp(#id, "device_mouse_x") || !strcmp(#id, "device_mouse_y")) &&            \
+            cam3d_room(self, #id[13] == 'y', &v)) { res->real = v; res->flags = 0; res->kind = RV_REAL; } \
         if (rb_input_log) note(#id, argc, args, rb_rv_real(res));                           \
     }
 #define WRAP_VAR(id)                                                                        \
@@ -86,6 +92,8 @@ static void note(const char *name, int argc, RValue *args, double val) {
         double v;                                                                           \
         if (vf_value(#id, 0, 0, &v)) { out->real = v; out->flags = 0; out->kind = RV_REAL; return 1; } \
         int r = origv_##id(self, arr, out);                                                 \
+        if ((!strcmp(#id, "mouse_x") || !strcmp(#id, "mouse_y")) && cam3d_room(self, #id[6] == 'y', &v)) \
+            { out->real = v; out->flags = 0; out->kind = RV_REAL; }                         \
         if (rb_input_log) note(#id, 0, 0, rb_rv_real(out));                                 \
         return r;                                                                           \
     }
@@ -156,4 +164,19 @@ double rb_call(void *fn, CInstance *self, int argc, const double *argv) {
     if (!fn) return 0;
     ((BuiltinFn)fn)(&res, self, self, argc, args);
     return rb_rv_real(&res);
+}
+
+static int cam3d_room(CInstance *self, int want_y, double *out) {
+    if (!rb_cam3d_on || !orig_device_mouse_x_to_gui || !orig_device_mouse_y_to_gui) return 0;
+    static void *f_gw, *f_gh;
+    if (!f_gw) { f_gw = rb_builtin("display_get_gui_width"); f_gh = rb_builtin("display_get_gui_height"); }
+    RValue res = {0}, a0 = {0};
+    a0.kind = RV_REAL; a0.real = 0;
+    orig_device_mouse_x_to_gui(&res, self, self, 1, &a0); double gx = rb_rv_real(&res);
+    orig_device_mouse_y_to_gui(&res, self, self, 1, &a0); double gy = rb_rv_real(&res);
+    double gw = rb_call(f_gw, self, 0, 0), gh = rb_call(f_gh, self, 0, 0);
+    double rx, ry;
+    if (!rb_cam3d_ground(gx, gy, gw, gh, &rx, &ry)) return 0;
+    *out = want_y ? ry : rx;
+    return 1;
 }

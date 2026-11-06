@@ -6,6 +6,7 @@
 #include "cpuqb.h"
 #include "defense.h"
 #include "dbrain.h"
+#include "camera3d.h"
 
 enum {
 #define HOOK(name, va, insn) HK_##name,
@@ -169,6 +170,14 @@ RValue *hook_create_message(CInstance *self, CInstance *other, RValue *res, int 
 RValue *hook_msg_clear(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
     if (!g_cpu_clearing) rb_cpuqb_fourth_closed();
     return ORIG(msg_clear)(self, other, res, argc, argv);
+}
+
+// =============================================================== experimental 3D camera
+RValue *hook_update_camera(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
+    rb_cam3d_before(self);
+    RValue *r = ORIG(update_camera)(self, other, res, argc, argv);
+    rb_cam3d_after(self);
+    return r;
 }
 
 // =============================================================== player control on defense
