@@ -181,10 +181,12 @@ void hook_camera_step2(CInstance *self, CInstance *other) {     // obj_camera En
     rb_cam3d_after(self);
 }
 
+extern unsigned rb_spr_calls;
 // every sprite draw (draw_sprite_ext's engine routine): in 3D the crowd strips are stood up as bleachers
 long hook_spr_draw(CInstance *self, long sprite, long colour, float sub, float x, float y,
                    float xs, float ys, float rot, float alpha) {
     RbDrawSprFn orig = (RbDrawSprFn)RB_TRAMP(HK_spr_draw);
+    rb_spr_calls++;
     if (!rb_cam3d_in_gui_pass && rb_cam3d_on && rb_cam3d_active())
         return rb_cam3d_spr_draw(orig, self, sprite, colour, sub, x, y, xs, ys, rot, alpha);
     return orig(self, sprite, colour, sub, x, y, xs, ys, rot, alpha);

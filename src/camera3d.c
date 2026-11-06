@@ -16,7 +16,11 @@ int rb_cam3d_on = 1;
 #define CAM_HEIGHT  125.0     // eye height above the field
 #define CAM_AHEAD   240.0     // look this far downfield of the ball
 #define CAM_FOV     60.0
-#define VIEW_GROW   4.0       // enlarge the culling box this much while drawing
+// diagnostic A/B: cycles every 300 frames through {view box x4, x1.6} x {sky+bleachers on, off}
+int rb_cam3d_cfg;
+unsigned rb_spr_calls;
+#define VIEW_GROW   ((rb_cam3d_cfg & 2) ? 1.6 : 4.0)
+#define STANDS_ON   (!(rb_cam3d_cfg & 1))
 
 typedef struct { double v[3]; } V3;
 static V3 v3(double x, double y, double z) { V3 r = {{x, y, z}}; return r; }
@@ -36,7 +40,7 @@ static struct {
 } C;
 
 extern uint64_t mach_absolute_time(void);
-static uint64_t g_t_frame; static unsigned g_t_frames;
+static uint64_t g_t_frame, g_t_gui, g_t_world, g_t_draw, g_t_after_end; static unsigned g_t_frames, g_t_n, g_t_sprites;
 
 static void *fn(const char *name) {          // cached by the literal's address
     static const char *names[64]; static void *fns[64];
@@ -175,6 +179,15 @@ void rb_cam3d_after(CInstance *self) {
         static uint64_t last; uint64_t now = mach_absolute_time();
         if (last && now > last && now - last < 24000ULL * 1000) { g_t_frame += now - last; g_t_frames++; }
         last = now;
+        if (++g_t_n == 300) {                                 // ticks are 1/24 us on iPhone
+            static const char *cfgname[4] = { "box x4, stands on", "box x4, stands OFF", "box x1.6, stands on", "box x1.6, stands OFF" };
+            rb_log("cam3d: [%s] %.1f fps | draw cpu %.2f ms (our screen pass %.2f, sky+stands %.2f) | %u sprites, %u sprite draws/frame",
+                   cfgname[rb_cam3d_cfg & 3], g_t_frames && g_t_frame ? 24000000.0 * g_t_frames / (double)g_t_frame : 0,
+                   g_t_draw / 300.0 / 24000.0, g_t_gui / 300.0 / 24000.0, g_t_world / 300.0 / 24000.0, g_t_sprites, rb_spr_calls / 300);
+            g_t_gui = g_t_world = g_t_draw = 0; g_t_n = 0; g_t_frame = 0; g_t_frames = 0; rb_spr_calls = 0;
+            rb_cam3d_cfg = (rb_cam3d_cfg + 1) & 3;
+        }
+        g_t_after_end = mach_absolute_time();
     }
     if (calls % 600 == 1) {
         RValue a1[1] = { R(cam) }, vm;
@@ -264,7 +277,6 @@ static void reset_world(CInstance *self) {
     rvfree(&id);
 }
 
-static uint64_t g_t_gui, g_t_world; static unsigned g_t_n;
 void rb_cam3d_gui_pass(CInstance *self, void (*draw_player)(CInstance *), void (*draw_ball)(CInstance *), void (*draw_text)(CInstance *)) {
     if (!rb_cam3d_active()) return;
     uint64_t t0 = mach_absolute_time();
@@ -296,13 +308,9 @@ void rb_cam3d_gui_pass(CInstance *self, void (*draw_player)(CInstance *), void (
     }
     reset_world(self);
     rb_cam3d_in_gui_pass = 0;
-    g_t_gui += mach_absolute_time() - t0;
-    if (++g_t_n == 300) {                                 // ticks are 1/24 us on iPhone
-        rb_log("cam3d: avg per frame: screen pass %.2f ms, sky+stands %.2f ms, %d sprites, %.1f fps",
-               g_t_gui / 300.0 / 24000.0, g_t_world / 300.0 / 24000.0, L.n,
-               g_t_frames && g_t_frame ? 24000000.0 * g_t_frames / (double)g_t_frame : 0);
-        g_t_gui = g_t_world = 0; g_t_n = 0; g_t_frame = 0; g_t_frames = 0;
-    }
+    uint64_t t1 = mach_absolute_time();
+    g_t_gui += t1 - t0; g_t_sprites = L.n;
+    if (g_t_after_end && t1 > g_t_after_end) g_t_draw += t1 - g_t_after_end;
 }
 
 double rb_cam3d_fwd(void) { return C.fwd ? C.fwd : 1; }
@@ -364,6 +372,7 @@ void rb_cam3d_log_layers(CInstance *self) {
 #define SPR_FANS_CO    203
 #define SPR_FANS       204
 #define FANS_H         33.0
+#define FANS_W         1300.0
 #define FIELD_H        237.0
 #define STAND_ANGLE    62.0
 
@@ -411,6 +420,9 @@ static void draw_sky(CInstance *self) {
     double top = 0xE0A060, low = 0xF8D8A8;            // BGR: sky blue -> pale at the horizon
     double a[9] = { 0, 0, gw, hy + 2, top, top, low, low, 0 };
     rb_call(fn("draw_rectangle_colour"), self, 9, a);
+    double grass = 0x3C6A44;                          // BGR: dark grass around the stadium (no more black void)
+    double g[9] = { 0, hy + 1, gw, gh, grass, grass, grass, grass, 0 };
+    rb_call(fn("draw_rectangle_colour"), self, 9, g);
     mset(self, 0, sv); mset(self, 1, sp);
     rvfree(&v2); rvfree(&p2); rvfree(&sv); rvfree(&sp);
 }
@@ -423,10 +435,33 @@ static double array_real(CInstance *self, RValue arr, int i) {
     return d;
 }
 
+// draw one strip hinged up off the ground along the line y = F (ang: tilt, sign picks the side)
+static long draw_hinged(RbDrawSprFn orig, CInstance *self, long sprite, long colour, float sub, float x, float y,
+                        float xs, float ys, float rot, float alpha, double F, double ang) {
+    long r;
+    RValue m1 = mbuild(self, 0, -F, 0, 0, 1, 1, 0);          // flatten layer depth, hinge line -> y=0
+    RValue m2 = mbuild(self, 0, F, 0, ang, 1, 1, 1);         // stand up, back into place
+    RValue mm[2] = { m1, m2 }, w;
+    callrv(fn("matrix_multiply"), self, 2, mm, &w);
+    RValue la[9] = { R(C.eye.v[0]), R(C.eye.v[1]), R(C.eye.v[2]), R(M.at.v[0]), R(M.at.v[1]), R(M.at.v[2]), R(0), R(0), R(1) };
+    RValue look, oldv, oldw;
+    callrv(fn("matrix_build_lookat"), self, 9, la, &look);
+    mget(self, 0, &oldv); mget(self, 2, &oldw);
+    if (look.kind == RV_UNDEFINED || w.kind == RV_UNDEFINED || oldv.kind == RV_UNDEFINED || oldw.kind == RV_UNDEFINED) {
+        r = orig(self, sprite, colour, sub, x, y, xs, ys, rot, alpha);       // something missing: draw it flat
+    } else {
+        mset(self, 0, look); mset(self, 2, w);
+        r = orig(self, sprite, colour, sub, x, y, xs, ys, rot, alpha);
+        mset(self, 2, oldw); mset(self, 0, oldv);
+    }
+    rvfree(&m1); rvfree(&m2); rvfree(&w); rvfree(&look); rvfree(&oldv); rvfree(&oldw);
+    return r;
+}
+
 long rb_cam3d_spr_draw(RbDrawSprFn orig, CInstance *self, long sprite, long colour, float sub, float x, float y,
                        float xs, float ys, float rot, float alpha) {
     int fans = sprite == SPR_FANS || sprite == SPR_FANS_CO, field = sprite == SPR_FIELD || sprite == SPR_FIELD_CO;
-    if ((!fans && !field) || !M.have || M.frame < 10) return orig(self, sprite, colour, sub, x, y, xs, ys, rot, alpha);
+    if ((!fans && !field) || !M.have || M.frame < 10 || !STANDS_ON) return orig(self, sprite, colour, sub, x, y, xs, ys, rot, alpha);
     uint64_t t0 = mach_absolute_time();
     static int crumb;
     #define CRUMB(n, msg) do { if (crumb < (n)) { crumb = (n); rb_log("cam3d: stage %d %s (spr %ld self %p)", n, msg, sprite, (void *)self); } } while (0)
@@ -462,26 +497,12 @@ long rb_cam3d_spr_draw(RbDrawSprFn orig, CInstance *self, long sprite, long colo
         double mid = B.fy + B.fh / 2, F, ang;
         if ((lo + hi) / 2 < mid) { if (hi > B.cur_top) B.cur_top = hi; F = B.top_fold > -1e8 ? B.top_fold : hi; ang = B.rs * STAND_ANGLE; }
         else                     { if (lo < B.cur_bot) B.cur_bot = lo; F = B.bot_fold < 1e8 ? B.bot_fold : lo; ang = -B.rs * STAND_ANGLE; }
-        RValue m1 = mbuild(self, 0, -F, 0, 0, 1, 1, 0);          // flatten layer depth, hinge line -> y=0
-        RValue m2 = mbuild(self, 0, F, 0, ang, 1, 1, 1);         // stand up, back into place
-        RValue mm[2] = { m1, m2 }, w;
-        callrv(fn("matrix_multiply"), self, 2, mm, &w);
-        CRUMB(6, "hinge built");
-        RValue la[9] = { R(C.eye.v[0]), R(C.eye.v[1]), R(C.eye.v[2]), R(M.at.v[0]), R(M.at.v[1]), R(M.at.v[2]), R(0), R(0), R(1) };
-        RValue look, oldv, oldw;
-        callrv(fn("matrix_build_lookat"), self, 9, la, &look);
-        mget(self, 0, &oldv); mget(self, 2, &oldw);
-        if (look.kind == RV_UNDEFINED || w.kind == RV_UNDEFINED || oldv.kind == RV_UNDEFINED || oldw.kind == RV_UNDEFINED) {
-            r = orig(self, sprite, colour, sub, x, y, xs, ys, rot, alpha);       // something missing: draw it flat
-        } else {
-            mset(self, 0, look); mset(self, 2, w);
-            CRUMB(7, "matrices set");
-            r = orig(self, sprite, colour, sub, x, y, xs, ys, rot, alpha);
-            CRUMB(8, "strip drawn");
-            mset(self, 2, oldw); mset(self, 0, oldv);
-            CRUMB(9, "restored");
+        r = draw_hinged(orig, self, sprite, colour, sub, x, y, xs, ys, rot, alpha, F, ang);
+        CRUMB(8, "strip drawn");
+        if ((lo + hi) / 2 < mid && B.bot_fold > 1e8) {          // the game has no stand on the near side: mirror this one there
+            double Fb = B.fy + B.fh;                            // near edge of the field image
+            draw_hinged(orig, self, sprite, colour, sub, x + FANS_W * xs, Fb + (hi - y), -xs, -ys, rot, alpha, Fb, -B.rs * STAND_ANGLE);
         }
-        rvfree(&m1); rvfree(&m2); rvfree(&w); rvfree(&look); rvfree(&oldv); rvfree(&oldw);
     }
     g_t_world += mach_absolute_time() - t0;
     return r;
