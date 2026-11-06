@@ -21,7 +21,7 @@
 
 enum { PH_IDLE, PH_PRESNAP, PH_HANDOFF, PH_PULL, PH_READ, PH_AIM, PH_SCRAMBLE_GO, PH_SCRAMBLE, PH_KICK_TAP, PH_FG, PH_DONE };
 
-typedef struct { CInstance *inst; double x, y, vx, vy; int seen; } Track;
+typedef struct { CInstance *inst; double x, y, vx, vy; int seen; double hd, turn; } Track;
 
 static struct {
     CInstance *ball;
@@ -39,6 +39,7 @@ static struct {
     int measured;
     int fourth_done, fg_peak_frames; double fg_last_pow;
     double btn_x, btn_y;
+    unsigned sw_t, sw_cool; double sw_dir, sw_x, sw_y;   // juke swipe in progress
 } Q;
 
 int rb_cpuqb_punt_pending;     // hooks.c performs the punt after the ball update returns
@@ -58,6 +59,13 @@ static int collect(CInstance *inst, void *vctx) {
         if (t->inst == inst) {
             double vx = x - t->x, vy = y - t->y;
             t->vx = t->vx * 0.6 + vx * 0.4; t->vy = t->vy * 0.6 + vy * 0.4;   // smoothed per-frame velocity
+            if (hypot(t->vx, t->vy) > 0.5) {                                    // how hard is he cutting?
+                double h = atan2(t->vy, t->vx) * 57.29577951308232, dh = h - t->hd;
+                while (dh > 180) dh -= 360;
+                while (dh < -180) dh += 360;
+                t->turn = t->turn * 0.8 + fabs(dh) * 0.2;
+                t->hd = h;
+            }
             t->x = x; t->y = y; t->seen = 1;
             return 0;
         }
@@ -177,6 +185,7 @@ static int pick_receiver(double *score_out, double *open_out) {
         double at_catch = clearance_at(lx, ly, T);
         double lane = lane_clearance(lx, ly, v);
         double open = at_catch < lane + (SAFE_OPEN - LANE_MIN) ? at_catch : lane + (SAFE_OPEN - LANE_MIN);
+        if (r->turn > 6) open -= 15;                          // mid-cut: the lead won't hold
         double gain = (lx - Q.los_x) * Q.fwd;
         double score = open + gain * (Q.deep ? 0.30 : 0.12) - (open < SAFE_OPEN ? 80 : 0) + frand() * 10;
         if (Q.down >= 3 && gain < Q.yards * 20 - 20) score -= 25;   // short of the sticks on 3rd/4th
@@ -253,7 +262,7 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         Q.t_phase = 40 + arc4random_uniform(40);              // snap after this many frames
         Q.down = rb_get_obj_real(OBJ_CONTROLLER, SLOT_DOWN);
         Q.yards = rb_get_obj_real(OBJ_CONTROLLER, SLOT_YARDS);
-        double p_run = 0.42;
+        double p_run = 0.45;
         if (Q.yards > 0 && Q.yards <= 2) p_run = 0.65;
         else if (Q.yards >= 8) p_run = 0.22;
         if (Q.down >= 3 && Q.yards >= 4) p_run = 0.10;
@@ -335,25 +344,31 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         double pressure = nearest_def(Q.qbx, Q.qby, 0);
         double score, open;
         int r = pick_receiver(&score, &open);
-        int go = 0;
-        if (!Q.scrambled && held > 20 && pressure < 70 && open < SAFE_OPEN) {       // pocket collapsing, nobody open
-            double lane = nearest_def(Q.qbx + Q.fwd * 80, Q.qby, 10);
-            if (lane > 55 && frand() < 0.08) {                              // checked every frame -> ~quickly
-                Q.phase = PH_SCRAMBLE_GO; Q.hold = 0; Q.scrambled = 1;
-                rb_log("cpuqb: scramble (pressure %.0f, lane %.0f)", pressure, lane);
-                break;
-            }
+        double lane = nearest_def(Q.qbx + Q.fwd * 80, Q.qby, 10);
+        int can_scramble = !Q.scrambled && lane > 45;
+        int go = 0, away = 0, run = 0;
+        if (held >= Q.read_frames && r >= 0 && open > SAFE_OPEN) go = 1;          // open man
+        else if (!Q.scrambled && held > 15 && pressure < 80 && open < SAFE_OPEN && lane > 50 && frand() < 0.15)
+            run = 1;                                                            // pocket breaking down: take off
+        else if (pressure < 40 && held > 8) {                                   // about to be hit
+            if (r >= 0 && open > 0) go = 1;                                     // tight but catchable
+            else if (can_scramble) run = 1;
+            else if (r >= 0 && open > -15) go = 1;
+            else away = 1;
+        } else if (held >= Q.read_frames + 90) {                                // out of time
+            if (r >= 0 && open > 5) go = 1;
+            else if (can_scramble) run = 1;
+            else away = 1;
         }
-        if (pressure < 45 && held > 8) go = 1;                              // about to be hit
-        else if (held >= Q.read_frames && r >= 0 && open > SAFE_OPEN) go = 1;   // open man
-        else if (held >= Q.read_frames + 70) go = 1;                        // out of time
-        if (go && r >= 0 && open < SAFE_OPEN * 0.4) r = -1;                 // nothing safe: throw it away
-        if (go && r >= 0) {
+        if (run) {
+            Q.phase = PH_SCRAMBLE_GO; Q.hold = 0; Q.scrambled = 1;
+            rb_log("cpuqb: scramble (pressure %.0f, lane %.0f, best open %.0f)", pressure, lane, open);
+        } else if (go) {
             Q.tgt = r; Q.phase = PH_AIM; Q.hold = 0;
             rb_log("cpuqb: throw to #%d open %.0f pressure %.0f after %u frames", r, open, pressure, held);
-        } else if (go) {
-            Q.tgt = -1; Q.phase = PH_AIM; Q.hold = 0;            // nobody: throw it away downfield
-            rb_log("cpuqb: nobody open, throwing away (pressure %.0f)", pressure);
+        } else if (away) {
+            Q.tgt = -1; Q.phase = PH_AIM; Q.hold = 0;
+            rb_log("cpuqb: throwing it away (pressure %.0f, best open %.0f)", pressure, open);
         }
         break;
     }
@@ -429,7 +444,7 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
     }
 
     default:
-        finger(0, rb_vf.gui_x, rb_vf.gui_y);
+        if (!Q.sw_t) finger(0, rb_vf.gui_x, rb_vf.gui_y);
         if (st == 3 && !Q.measured && Q.drag > 0) {            // ball just left his hand: calibrate
             Q.measured = 1;
             double vel = rb_get_inst_real(ball, SLOT_VELOCITY), dd = rb_get_inst_real(ball, SLOT_DRAGDIST);
@@ -441,6 +456,32 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
             }
         }
         break;
+    }
+
+    // ---- ball carrier jukes: a quick vertical flick, away from the defender closing in his path
+    int carrying = st == 5 && Q.qb && (Q.phase == PH_DONE || Q.phase == PH_SCRAMBLE) && !rb_vf.down;
+    if (Q.sw_t) {                                   // swipe in progress: 5 frames of drag, then lift
+        Q.sw_t++;
+        if (Q.sw_t <= 6) { rb_vf.room_x = Q.qbx; rb_vf.room_y = Q.qby + 100; finger(1, Q.sw_x, Q.sw_y + Q.sw_dir * 9.0 * (Q.sw_t - 1)); }
+        else { finger(0, rb_vf.gui_x, rb_vf.gui_y); Q.sw_t = 0; Q.sw_cool = Q.t + 22; }
+    } else if (carrying && Q.t >= Q.sw_cool) {
+        double best = 1e9, threat_dy = 0;
+        for (int i = 0; i < Q.ndf; i++) {
+            if (!Q.df[i].seen) continue;
+            double ahead = (Q.df[i].x - Q.qbx) * Q.fwd, dy = Q.df[i].y - Q.qby;
+            if (ahead < -10 || ahead > 95 || fabs(dy) > 50) continue;
+            double d = hypot(ahead, dy);
+            if (d < best) { best = d; threat_dy = dy; }
+        }
+        if (best < 80) {
+            double dir = threat_dy > 0 ? -1 : 1;    // screen y: +1 = down
+            if (Q.qby < 200) dir = 1;               // don't juke into the sideline
+            if (Q.qby > 430) dir = -1;
+            Q.sw_t = 1; Q.sw_dir = dir; Q.sw_x = P0X; Q.sw_y = P0Y - dir * 20;
+            rb_vf.room_x = Q.qbx; rb_vf.room_y = Q.qby + 100;
+            finger(1, Q.sw_x, Q.sw_y);
+            rb_log("cpuqb: juke %s (defender %.0f away)", dir > 0 ? "down" : "up", best);
+        }
     }
 }
 
