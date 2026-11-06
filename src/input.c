@@ -180,7 +180,8 @@ static int cam3d_room(CInstance *self, int want_y, double *out) {
     orig_device_mouse_y_to_gui(&res, self, self, 1, &a0); double gy = rb_rv_real(&res);
     double gw = rb_call(f_gw, self, 0, 0), gh = rb_call(f_gh, self, 0, 0);
     double rx, ry;
-    if (!rb_cam3d_hit_player(gx, gy, &rx, &ry) && !rb_cam3d_ground(gx, gy, gw, gh, &rx, &ry)) return 0;
+    if (!rb_cam3d_hit_player(gx, gy, &rx, &ry) && !rb_cam3d_handoff_target(gx, gy, &rx, &ry) &&
+        !rb_cam3d_ground(gx, gy, gw, gh, &rx, &ry)) return 0;
     *out = want_y ? ry : rx;
     return 1;
 }

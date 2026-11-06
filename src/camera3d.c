@@ -12,9 +12,9 @@
 
 int rb_cam3d_on = 1;
 
-#define CAM_BACK    170.0     // eye distance behind the ball
-#define CAM_HEIGHT  95.0      // eye height above the field
-#define CAM_AHEAD   260.0     // look this far downfield of the ball
+#define CAM_BACK    240.0     // eye distance behind the ball carrier (backfield stays in view)
+#define CAM_HEIGHT  125.0     // eye height above the field
+#define CAM_AHEAD   240.0     // look this far downfield of the ball
 #define CAM_FOV     60.0
 #define VIEW_GROW   4.0       // enlarge the culling box this much while drawing
 
@@ -212,11 +212,11 @@ static int project(double wx, double wy, double gw, double gh, double *sx, doubl
     return project3(wx, wy, 0, gw, gh, sx, sy, depth);
 }
 
-typedef struct { CInstance *inst; double depth, sx, sy, scale; int is_ball; } Spr;   // is_ball: 0 player, 1 ball, 2 field text
+typedef struct { CInstance *inst; double depth, sx, sy, scale; int is_ball; int offense; } Spr;   // is_ball: 0 player, 1 ball, 2 field text
 typedef struct { Spr *s; int n, cap, is_ball; double gw, gh; } SprList;
 
 #define SCALE_MAX 2.4      // players right under the camera don't get huge
-#define NEAR_CULL 40.0
+#define NEAR_CULL 20.0
 static Spr g_last[48]; static int g_nlast; static double g_last_gw, g_last_gh;   // last frame's standing players (for taps)
 static int spr_cb(CInstance *inst, void *ctx) {
     SprList *L = ctx;
@@ -226,6 +226,7 @@ static int spr_cb(CInstance *inst, void *ctx) {
     if (sx < -200 || sx > L->gw + 200 || sy < -200 || sy > L->gh + 400) return 0;
     Spr *p = &L->s[L->n++];
     p->inst = inst; p->depth = z; p->sx = sx; p->sy = sy; p->is_ball = L->is_ball;
+    p->offense = L->is_ball == 0 && rb_get_inst_real(inst, SLOT_OFFENSE) > 0.5;
     p->scale = (L->gh / 2) / (z * C.tan_half);
     if (p->scale > SCALE_MAX) p->scale = SCALE_MAX;
     return 0;
@@ -430,4 +431,22 @@ static void draw_stands(CInstance *self, double gw, double gh) {
     if (open) rb_call(f_end, self, 0, 0);
     #undef U
     #undef V
+}
+
+// tap low on the screen before the snap = hand off: the offensive player nearest the camera
+// that isn't the ball carrier (the running back lines up behind the QB, i.e. toward the camera)
+int rb_cam3d_handoff_target(double gx, double gy, double *rx, double *ry) {
+    if (!rb_cam3d_active() || g_last_gh <= 0 || gy < g_last_gh * 0.88) return 0;
+    int best = -1; double bd = 1e9;
+    double qx = C.eye.v[0] + C.fwd * CAM_BACK, qy = C.eye.v[1];            // focus = ball carrier
+    for (int i = 0; i < g_nlast; i++) {
+        Spr *p = &g_last[i];
+        if (!p->offense) continue;
+        double x = rb_get_builtin_real(p->inst, SLOT_X), y = rb_get_builtin_real(p->inst, SLOT_Y);
+        if (hypot(x - qx, y - qy) < 15) continue;                           // that's the QB
+        if ((x - qx) * C.fwd > -20) continue;                               // must be behind him
+        if (p->depth < bd) { bd = p->depth; best = i; *rx = x; *ry = y; }
+    }
+    (void)gx;
+    return best >= 0;
 }

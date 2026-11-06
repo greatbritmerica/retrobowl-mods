@@ -11,3 +11,4 @@ int  rb_cam3d_hit_player(double gx, double gy, double *rx, double *ry);
 double rb_cam3d_fwd(void);
 void rb_cam3d_rotate_drag(double dx, double dy, double *ox, double *oy);
 int  rb_cam3d_stadium(CInstance *self, long sprite, int colour, float sub, float x, float y, float xs, float ys, float alpha);
+int  rb_cam3d_handoff_target(double gx, double gy, double *rx, double *ry);
