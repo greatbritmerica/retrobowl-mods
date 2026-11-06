@@ -5,6 +5,7 @@
 #include "input.h"
 #include "cpuqb.h"
 #include "defense.h"
+#include "dbrain.h"
 
 enum {
 #define HOOK(name, va, insn) HK_##name,
@@ -116,6 +117,7 @@ RValue *hook_update_ball(CInstance *self, CInstance *other, RValue *res, int arg
     double los, fwd, qbx, qby;
     rb_cpuqb_info(&los, &fwd, &qbx, &qby);
     rb_def_step(self, other, cpu_offense, los, fwd, qbx, qby);
+    rb_dlearn_step(self, other, human >= 0 && poss >= 0 && poss == human);
     double st = rb_get_inst_real(self, SLOT_STATE);
     if (st != g_last_state) {
         rb_log("ball f%u state %g -> %g  pos %.0f,%.0f vel %.2f dist %.1f %s",
@@ -173,6 +175,7 @@ RValue *hook_msg_clear(CInstance *self, CInstance *other, RValue *res, int argc,
 RValue *hook_get_destination(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
     RValue *r = ORIG(get_destination)(self, other, res, argc, argv);
     rb_def_after_ai(self);
+    rb_dlearn_after_ai(self);
     return r;
 }
 
