@@ -516,3 +516,10 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
 void rb_cpuqb_info(double *los_x, double *fwd, double *qbx, double *qby) {
     *los_x = Q.los_x; *fwd = Q.fwd; *qbx = Q.qbx; *qby = Q.qby;
 }
+
+// where the CPU's last throw is headed (0 if none this play)
+int rb_cpuqb_target(double *x, double *y) {
+    if (Q.drag <= 0) return 0;
+    *x = Q.aim_x; *y = Q.aim_y;
+    return 1;
+}

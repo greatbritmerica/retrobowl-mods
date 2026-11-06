@@ -6,3 +6,4 @@ void rb_cpuqb_info(double *los_x, double *fwd, double *qbx, double *qby);
 enum { ACT_NONE, ACT_PUNT, ACT_FIELD_GOAL, ACT_PLAY_4TH };
 extern int rb_cpuqb_action;      // run by hooks.c after the ball update returns
 extern int rb_cpuqb_fourth_msg;  // set by the message hook: 1 = FG offered, 2 = punt offered
+int rb_cpuqb_target(double *x, double *y);

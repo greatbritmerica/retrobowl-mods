@@ -8,6 +8,12 @@
 #include "sys.h"
 #include "input.h"
 #include "defense.h"
+#include "cpuqb.h"
+
+#define VA_S_DO_DIVE 0x10012b150ULL   // the game's dive move (used for the human ball carrier)
+#define DIVE_RANGE   70.0
+#define DIVE_FRAMES  24
+#define BREAK_FRAMES 70
 
 #define STICK_FULL   35.0
 #define STICK_DEAD   6.0
@@ -21,6 +27,8 @@ static struct {
     int down; unsigned t_down; double ax, ay, gx, gy, moved;
     unsigned t;
     double jdir, jforce; int steering;
+    double prev_st, bx, by, bvx, bvy;     // ball / carrier tracking
+    unsigned dive_until, break_until; double dive_dir, tx, ty;
 } D;
 
 typedef struct { double x, y; CInstance *best; double bd; } NearCtx;
@@ -37,6 +45,33 @@ static CInstance *nearest_defender(CInstance *self, CInstance *other, double x, 
     return c.best;
 }
 
+static double dir_to(double fx, double fy, double tx, double ty) {
+    double a = atan2(-(ty - fy), tx - fx) * 57.29577951308232;
+    return a < 0 ? a + 360 : a;
+}
+
+static void tap_action(CInstance *ball, CInstance *other, double st) {
+    double cx = rb_get_builtin_real(D.ctrl, SLOT_X), cy = rb_get_builtin_real(D.ctrl, SLOT_Y);
+    if (D.ctrl && st == 5 && hypot(D.bx - cx, D.by - cy) < DIVE_RANGE) {          // dive at the carrier
+        double lx = D.bx + D.bvx * 10, ly = D.by + D.bvy * 10;                    // where he's going
+        D.dive_dir = dir_to(cx, cy, lx, ly);
+        D.dive_until = D.t + DIVE_FRAMES;
+        rb_set_inst_real(D.ctrl, SLOT_JDIR, D.dive_dir);
+        rb_set_inst_real(D.ctrl, SLOT_JFORCE, 1.0);
+        RValue r = {0}; r.kind = RV_UNDEFINED;
+        ((GMLScript)RB(VA_S_DO_DIVE))(D.ctrl, D.ctrl, &r, 0, 0);
+        rb_log("defense: DIVE at carrier (%.0f away, heading %.0f)", hypot(D.bx - cx, D.by - cy), D.dive_dir);
+        return;
+    }
+    if (D.ctrl && st == 3 && rb_cpuqb_target(&D.tx, &D.ty)) {                     // break on the ball
+        D.break_until = D.t + BREAK_FRAMES;
+        rb_log("defense: break on the ball -> %.0f,%.0f", D.tx, D.ty);
+        return;
+    }
+    CInstance *n = nearest_defender(ball, other, D.bx, D.by);                        // switch
+    if (n) { D.ctrl = n; D.dive_until = D.break_until = 0; rb_log("defense: switched to %p", (void *)n); }
+}
+
 void rb_def_step(CInstance *ball, CInstance *other, int cpu_offense, double los_x, double fwd, double qbx, double qby) {
     double st = rb_get_inst_real(ball, SLOT_STATE);
     int live = cpu_offense && (st == 0 || st == 1 || st == 2 || st == 3 || st == 5 || st == 13 || st == 18 || st == 19);
@@ -51,8 +86,25 @@ void rb_def_step(CInstance *ball, CInstance *other, int cpu_offense, double los_
         if (D.ctrl) rb_log("defense: controlling %p", (void *)D.ctrl);
     }
 
+    double bx = rb_get_builtin_real(ball, SLOT_X), by = rb_get_builtin_real(ball, SLOT_Y);
+    if (D.t > 1) { D.bvx = D.bvx * 0.6 + (bx - D.bx) * 0.4; D.bvy = D.bvy * 0.6 + (by - D.by) * 0.4; }
+    D.bx = bx; D.by = by;
     int down; double gx, gy;
     rb_real_touch(ball, &down, &gx, &gy);
+    if (st != D.prev_st && !down) {                    // auto-switch to whoever is in on the play
+        double tx, ty;
+        if (st == 3 && rb_cpuqb_target(&tx, &ty)) {
+            CInstance *n = nearest_defender(ball, other, tx, ty);
+            if (n && n != D.ctrl) { D.ctrl = n; rb_log("defense: auto-switch to the target area"); }
+        } else if (st == 5 && D.ctrl) {
+            double cx = rb_get_builtin_real(D.ctrl, SLOT_X), cy = rb_get_builtin_real(D.ctrl, SLOT_Y);
+            if (hypot(bx - cx, by - cy) > 120) {
+                CInstance *n = nearest_defender(ball, other, bx, by);
+                if (n && n != D.ctrl) { D.ctrl = n; rb_log("defense: auto-switch to the ball carrier"); }
+            }
+        }
+    }
+    D.prev_st = st;
     if (down && !D.down) { D.t_down = D.t; D.ax = gx; D.ay = gy; D.moved = 0; }
     if (down) {
         double m = hypot(gx - D.ax, gy - D.ay);
@@ -69,11 +121,8 @@ void rb_def_step(CInstance *ball, CInstance *other, int cpu_offense, double los_
             D.steering = 1;
         } else D.steering = 0;
     } else {
-        if (D.down && D.t - D.t_down <= TAP_FRAMES && D.moved < TAP_MOVE) {   // tap -> switch
-            double bx = rb_get_builtin_real(ball, SLOT_X), by = rb_get_builtin_real(ball, SLOT_Y);
-            CInstance *n = nearest_defender(ball, other, bx, by);
-            if (n) { D.ctrl = n; rb_log("defense: switched to %p", (void *)n); }
-        }
+        if (D.down && D.t - D.t_down <= TAP_FRAMES && D.moved < TAP_MOVE)      // tap -> dive / break / switch
+            tap_action(ball, other, st);
         D.steering = 0;
     }
     D.down = down;
@@ -81,9 +130,25 @@ void rb_def_step(CInstance *ball, CInstance *other, int cpu_offense, double los_
 
 // after the AI has picked a heading for a player
 void rb_def_after_ai(CInstance *player) {
-    if (!D.active || player != D.ctrl || !D.steering) return;
-    rb_set_inst_real(player, SLOT_JDIR, D.jdir);
-    rb_set_inst_real(player, SLOT_JFORCE, D.jforce);
+    if (!D.active || player != D.ctrl) return;
+    if (D.t < D.dive_until) {                                   // keep the lunge going where he aimed it
+        rb_set_inst_real(player, SLOT_JDIR, D.dive_dir);
+        rb_set_inst_real(player, SLOT_JFORCE, 1.0);
+        return;
+    }
+    if (D.steering) {
+        rb_set_inst_real(player, SLOT_JDIR, D.jdir);
+        rb_set_inst_real(player, SLOT_JFORCE, D.jforce);
+        D.break_until = 0;
+        return;
+    }
+    if (D.t < D.break_until) {                                  // sprint to the catch point
+        double x = rb_get_builtin_real(player, SLOT_X), y = rb_get_builtin_real(player, SLOT_Y);
+        if (hypot(D.tx - x, D.ty - y) > 6) {
+            rb_set_inst_real(player, SLOT_JDIR, dir_to(x, y, D.tx, D.ty));
+            rb_set_inst_real(player, SLOT_JFORCE, 1.0);
+        }
+    }
 }
 
 // marker on the controlled defender: ring at his feet + dot over his head (drawn after him, on top)
