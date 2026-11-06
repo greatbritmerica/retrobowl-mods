@@ -143,9 +143,9 @@ static void lead_point(int i, double *lx, double *ly, double *speed) {
 
 // Defenders react once the ball is up: assume each keeps his momentum for part of the flight and
 // then gains DEF_CLOSE px/frame on the ball. Clearance = how far the nearest one still is.
-#define DEF_CLOSE  0.55
-#define SAFE_OPEN  22.0       // clearance needed to call a man open
-#define LANE_MIN   14.0       // clearance needed along the catchable part of the flight
+#define DEF_CLOSE  0.30
+#define SAFE_OPEN  15.0       // clearance needed to call a man open
+#define LANE_MIN   10.0       // clearance needed along the catchable part of the flight
 
 static double clearance_at(double bx, double by, double t) {
     double best = 1e9;
@@ -190,7 +190,8 @@ static int pick_receiver(double *score_out, double *open_out) {
         double open = at_catch < lane + (SAFE_OPEN - LANE_MIN) ? at_catch : lane + (SAFE_OPEN - LANE_MIN);
         if (r->turn > 6) open -= 15;                          // mid-cut: the lead won't hold
         double gain = (lx - Q.los_x) * Q.fwd;
-        double score = open + gain * (Q.deep ? 0.30 : 0.12) - (open < SAFE_OPEN ? 80 : 0) + frand() * 10;
+        double score = open * 0.8 + gain * (Q.deep ? 0.45 : 0.25) - (open < SAFE_OPEN ? 80 : 0) + frand() * 10;
+        if (gain < 40) score -= 20;                          // dump-offs at the line are a last resort
         if (Q.down >= 3 && gain < Q.yards * 20 - 20) score -= 25;   // short of the sticks on 3rd/4th
         if (score > best_score) { best_score = score; best = i; best_open = open; }
     }
@@ -277,8 +278,7 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         Q.mtp = rb_get_inst_real(Q.qb, SLOT_MY_THROW_POWER);
         if (g_k_per_mtp > 0 && Q.mtp > 0) Q.k = Q.mtp * g_k_per_mtp;
         else if (Q.mtp > 0) {
-            Q.k = Q.mtp * 1.2;                                  // velocity = drag * my_throw_power (x or / 1.2)
-            if (Q.k > 0.2 || Q.k < 0.04) Q.k = Q.mtp / 1.2;
+            Q.k = Q.mtp;                                        // measured: speed per drag pixel ~= my_throw_power
         }
         if (!(Q.k > 0.03 && Q.k < 0.3)) Q.k = THROW_K;
         double sx = 0; int n = 0;
@@ -290,7 +290,7 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         Q.down = rb_get_obj_real(OBJ_CONTROLLER, SLOT_DOWN);
         if (Q.down < 4) g_fourth_answered = 0;
         Q.yards = rb_get_obj_real(OBJ_CONTROLLER, SLOT_YARDS);
-        double p_run = 0.45;
+        double p_run = 0.38;
         if (Q.yards > 0 && Q.yards <= 2) p_run = 0.65;
         else if (Q.yards >= 8) p_run = 0.22;
         if (Q.down >= 3 && Q.yards >= 4) p_run = 0.10;
@@ -381,10 +381,10 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         else if (pressure < 40 && held > 8) {                                   // about to be hit
             if (r >= 0 && open > 0) go = 1;                                     // tight but catchable
             else if (can_scramble) run = 1;
-            else if (r >= 0 && open > -15) go = 1;
+            else if (r >= 0 && open > 6) go = 1;
             else away = 1;
         } else if (held >= Q.read_frames + 90) {                                // out of time
-            if (r >= 0 && open > 5) go = 1;
+            if (r >= 0 && open > 8) go = 1;
             else if (can_scramble) run = 1;
             else away = 1;
         }

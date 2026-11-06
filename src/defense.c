@@ -11,7 +11,7 @@
 #include "cpuqb.h"
 
 #define VA_S_DO_DIVE 0x10012b150ULL   // the game's dive move (used for the human ball carrier)
-#define DIVE_RANGE   70.0
+#define DIVE_RANGE   55.0
 #define DIVE_FRAMES  24
 #define BREAK_FRAMES 70
 
@@ -29,6 +29,7 @@ static struct {
     double jdir, jforce; int steering;
     double prev_st, bx, by, bvx, bvy;     // ball / carrier tracking
     unsigned dive_until, break_until; double dive_dir, tx, ty;
+    int dove;                             // one dive per play: after that he's on the ground
 } D;
 
 typedef struct { double x, y; CInstance *best; double bd; } NearCtx;
@@ -52,10 +53,12 @@ static double dir_to(double fx, double fy, double tx, double ty) {
 
 static void tap_action(CInstance *ball, CInstance *other, double st) {
     double cx = rb_get_builtin_real(D.ctrl, SLOT_X), cy = rb_get_builtin_real(D.ctrl, SLOT_Y);
+    if (D.ctrl && st == 5 && D.dove) return;                                     // already dove this play
     if (D.ctrl && st == 5 && hypot(D.bx - cx, D.by - cy) < DIVE_RANGE) {          // dive at the carrier
         double lx = D.bx + D.bvx * 10, ly = D.by + D.bvy * 10;                    // where he's going
         D.dive_dir = dir_to(cx, cy, lx, ly);
         D.dive_until = D.t + DIVE_FRAMES;
+        D.dove = 1;
         rb_set_inst_real(D.ctrl, SLOT_JDIR, D.dive_dir);
         rb_set_inst_real(D.ctrl, SLOT_JFORCE, 1.0);
         RValue r = {0}; r.kind = RV_UNDEFINED;
