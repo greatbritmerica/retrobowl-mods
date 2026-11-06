@@ -199,14 +199,17 @@ int rb_cam3d_in_gui_pass;
 
 int rb_cam3d_active(void) { return rb_cam3d_on && C.valid && g_reads_since_update < 400; }
 
-static int project(double wx, double wy, double gw, double gh, double *sx, double *sy, double *depth) {
-    V3 d = sub(v3(wx, wy, 0), C.eye);
+static int project3(double wx, double wy, double wz, double gw, double gh, double *sx, double *sy, double *depth) {
+    V3 d = sub(v3(wx, wy, wz), C.eye);
     double zc = d.v[0]*C.f.v[0] + d.v[1]*C.f.v[1] + d.v[2]*C.f.v[2];
     if (zc < 5) return 0;
     double xs = (d.v[0]*C.r.v[0] + d.v[1]*C.r.v[1] + d.v[2]*C.r.v[2]) / (zc * C.tan_half * C.aspect);
     double ys = (d.v[0]*C.u.v[0] + d.v[1]*C.u.v[1] + d.v[2]*C.u.v[2]) / (zc * C.tan_half);
     *sx = (xs + 1) / 2 * gw; *sy = (1 - ys) / 2 * gh; *depth = zc;
     return 1;
+}
+static int project(double wx, double wy, double gw, double gh, double *sx, double *sy, double *depth) {
+    return project3(wx, wy, 0, gw, gh, sx, sy, depth);
 }
 
 typedef struct { CInstance *inst; double depth, sx, sy, scale; int is_ball; } Spr;   // is_ball: 0 player, 1 ball, 2 field text
@@ -247,6 +250,7 @@ static void reset_world(CInstance *self) {
     rvfree(&id);
 }
 
+static void draw_stands(CInstance *self, double gw, double gh);
 void rb_cam3d_gui_pass(CInstance *self, void (*draw_player)(CInstance *), void (*draw_ball)(CInstance *), void (*draw_text)(CInstance *)) {
     if (!rb_cam3d_active()) return;
     double gw = callreal("display_get_gui_width", self, 0, 0, 0), gh = callreal("display_get_gui_height", self, 0, 0, 0);
@@ -261,6 +265,7 @@ void rb_cam3d_gui_pass(CInstance *self, void (*draw_player)(CInstance *), void (
         double a[10] = { 0, 0, gw, hy + 2, top, top, low, low, 0 };
         rb_call(fn("draw_rectangle_colour"), self, 9, a);
     }
+    draw_stands(self, gw, gh);
     static Spr buf[48];
     SprList L = { buf, 0, 48, 0, gw, gh };
     RValue r = rb_obj_ref(OBJ_PLAYER);
@@ -335,4 +340,68 @@ void rb_cam3d_log_layers(CInstance *self) {
         rvfree(&nm);
     }
     rvfree(&all);
+}
+
+// ---------------------------------------------------------------- the stands as bleachers
+// The stadium is one image drawn at 0,0 (x2). Rows above FOLD_Y (room) are the crowd: on the ground
+// we draw only the rest; the crowd rows are redrawn on the screen layer tilted up like bleachers.
+#define FOLD_Y      100.0
+#define STAND_ANGLE 55.0
+#define STRIP       48.0
+
+static struct { int have; long sprite; double sub, x, y, xs, ys, alpha; int colour; } ST;
+
+int rb_cam3d_stadium(CInstance *self, long sprite, int colour, float sub, float x, float y, float xs, float ys, float alpha) {
+    if (!rb_cam3d_active() || ys <= 0 || xs <= 0) return 0;
+    ST.have = 1; ST.sprite = sprite; ST.sub = sub; ST.x = x; ST.y = y; ST.xs = xs; ST.ys = ys; ST.alpha = alpha; ST.colour = colour;
+    double sw = callreal("sprite_get_width", self, 1, (double)sprite, 0), sh = callreal("sprite_get_height", self, 1, (double)sprite, 0);
+    double top = (FOLD_Y - y) / ys;                       // first sprite row that stays on the ground
+    if (!(sw > 0 && sh > top && top > 0)) return 0;
+    double a[12] = { (double)sprite, sub, 0, top, sw, sh - top, x, y + top * ys, xs, ys, (double)colour, alpha };
+    rb_call(fn("draw_sprite_part_ext"), self, 12, a);
+    return 1;
+}
+
+static void draw_stands(CInstance *self, double gw, double gh) {
+    if (!ST.have) return;
+    double sw = callreal("sprite_get_width", self, 1, (double)ST.sprite, 0);
+    double sh = callreal("sprite_get_height", self, 1, (double)ST.sprite, 0);
+    if (!(sw > 0 && sh > 0)) return;
+    RValue ua[2] = { R((double)ST.sprite), R(ST.sub) }, uvs, tex;
+    callrv(fn("sprite_get_uvs"), self, 2, ua, &uvs);
+    callrv(fn("sprite_get_texture"), self, 2, ua, &tex);
+    double uv[8] = { 0, 0, 1, 1, 0, 0, 1, 1 };
+    for (int i = 0; i < 8; i++) {
+        RValue ga[2] = { uvs, R(i) }, e;
+        callrv(fn("array_get"), self, 2, ga, &e);
+        if (e.kind == RV_REAL) uv[i] = e.real;
+        rvfree(&e);
+    }
+    double tw = sw * (uv[6] > 0 ? uv[6] : 1), th = sh * (uv[7] > 0 ? uv[7] : 1);
+    #define U(px) (uv[0] + ((px) - uv[4]) / tw * (uv[2] - uv[0]))
+    #define V(py) (uv[1] + ((py) - uv[5]) / th * (uv[3] - uv[1]))
+    double depth_px = (FOLD_Y - ST.y) / ST.ys;            // crowd rows in the sprite: 0 .. depth_px
+    double ca = cos(STAND_ANGLE / 57.29577951308232), sa = sin(STAND_ANGLE / 57.29577951308232);
+    double run = FOLD_Y - ST.y;                           // room distance from the fold to the back row
+    double y_top = FOLD_Y - run * ca, z_top = -run * sa;  // back row: further out and up
+    void *f_begin = fn("draw_primitive_begin_texture"), *f_vtx = fn("draw_vertex_texture"), *f_end = fn("draw_primitive_end");
+    double x0 = ST.x, x1 = ST.x + sw * ST.xs;
+    for (double xa = x0; xa < x1; xa += STRIP) {
+        double xb = xa + STRIP > x1 ? x1 : xa + STRIP;
+        double s1x, s1y, s2x, s2y, s3x, s3y, s4x, s4y, d1, d2, d3, d4;
+        if (!project3(xa, FOLD_Y, 0, gw, gh, &s1x, &s1y, &d1) || !project3(xb, FOLD_Y, 0, gw, gh, &s2x, &s2y, &d2) ||
+            !project3(xa, y_top, z_top, gw, gh, &s3x, &s3y, &d3) || !project3(xb, y_top, z_top, gw, gh, &s4x, &s4y, &d4))
+            continue;
+        if ((s1x < -50 && s2x < -50 && s3x < -50 && s4x < -50) || (s1x > gw + 50 && s2x > gw + 50 && s3x > gw + 50 && s4x > gw + 50)) continue;
+        double pxa = (xa - ST.x) / ST.xs, pxb = (xb - ST.x) / ST.xs;
+        RValue ba[2] = { R(5), tex }, t;                  // pr_trianglestrip
+        callrv(f_begin, self, 2, ba, &t); rvfree(&t);
+        double v1[4] = { s3x, s3y, U(pxa), V(0) }, v2[4] = { s1x, s1y, U(pxa), V(depth_px) };
+        double v3_[4] = { s4x, s4y, U(pxb), V(0) }, v4[4] = { s2x, s2y, U(pxb), V(depth_px) };
+        rb_call(f_vtx, self, 4, v1); rb_call(f_vtx, self, 4, v2); rb_call(f_vtx, self, 4, v3_); rb_call(f_vtx, self, 4, v4);
+        rb_call(f_end, self, 0, 0);
+    }
+    #undef U
+    #undef V
+    rvfree(&uvs); rvfree(&tex);
 }

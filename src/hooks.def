@@ -3,6 +3,7 @@
 // In C, define:  RValue *hook_<name>(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv)
 // and call the original with ORIG(name)(self, other, res, argc, argv).
 // The first instruction must not be PC-relative (adr/adrp/b/bl/cbz/ldr literal).
+// (CALLSITE lines below share the same numbering.)
 
 HOOK(change_possession, 0x10010aca8, "sub sp, sp, #0x150")
 HOOK(update_commentary, 0x1005ab618, "stp d11, d10, [sp, #-0x80]!")
@@ -17,3 +18,7 @@ HOOK(camera_step2, 0x1006c1df8, "stp d13, d12, [sp, #-0x90]!")
 HOOK(controller_gui, 0x1006e05c8, "stp d9, d8, [sp, #-0x70]!")
 HOOK(ball_draw, 0x10068dc68, "sub sp, sp, #0x1c0")
 HOOK(fieldtxt_draw, 0x1006f1a48, "stp d13, d12, [sp, #-0x90]!")
+
+// Call-site redirects:  CALLSITE(name, bl_site_va, original_target_va)
+// In C define call_<name> with the target's exact signature and call the original via RB(target).
+CALLSITE(stadium_draw, 0x1004792b8, 0x1008d91cc)

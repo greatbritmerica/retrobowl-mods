@@ -108,14 +108,25 @@ def write_words(va, words):
 hooks = []
 for line in (ROOT / 'src/hooks.def').read_text().splitlines():
     m = re.match(r'\s*HOOK\(\s*(\w+)\s*,\s*(0x[0-9a-fA-F]+)\s*,\s*"([^"]+)"\s*\)', line)
-    if m: hooks.append((m.group(1), int(m.group(2), 16), m.group(3)))
+    if m: hooks.append(('hook', m.group(1), int(m.group(2), 16), m.group(3)))
+    m = re.match(r'\s*CALLSITE\(\s*(\w+)\s*,\s*(0x[0-9a-fA-F]+)\s*,\s*(0x[0-9a-fA-F]+)\s*\)', line)
+    if m: hooks.append(('call', m.group(1), int(m.group(2), 16), int(m.group(3), 16)))
 
 assert STUB_VA + STUB_SIZE * len(hooks) <= CUSTOM_VA, 'too many hooks'
-for k, (name, entry, insn) in enumerate(hooks):
+for k, (kind, name, entry, insn) in enumerate(hooks):
+    s = STUB_VA + STUB_SIZE * k
+    if kind == 'call':                       # redirect one bl: site -> stub -> C (or the original target)
+        site, target = entry, insn
+        assert get(site) == b(site, target, link=True), f'{name}: no bl {target:#x} at {site:#x}'
+        w = load_slot(s, HOOK_BASE + k)
+        w += [cbz(s + 8, s + 16, 16, x=True), BR_X16, b(s + 16, target), 0xD503201F]
+        write_words(s, w)
+        put(site, b(site, s, link=True))
+        print(f'call {name:24s} {site:#x} -> stub {s:#x} (else {target:#x})')
+        continue
     assert not PC_REL.match(insn), f'{name}: first instruction is PC-relative'
     orig = get(entry)
     assert orig == mc(insn), f'{name} @ {entry:#x}: expected "{insn}", found {orig:#010x} (already patched?)'
-    s = STUB_VA + STUB_SIZE * k
     w = load_slot(s, HOOK_BASE + k)
     w += [cbz(s + 8, s + 16, 16, x=True), BR_X16, orig, b(s + 20, entry + 4)]
     assert len(w) * 4 == STUB_SIZE

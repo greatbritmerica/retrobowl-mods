@@ -10,8 +10,10 @@
 
 enum {
 #define HOOK(name, va, insn) HK_##name,
+#define CALLSITE(name, site, target) HK_##name,
 #include "hooks.def"
 #undef HOOK
+#undef CALLSITE
     HK_COUNT
 };
 #define ORIG(name) ((GMLScript)RB_TRAMP(HK_##name))
@@ -179,6 +181,15 @@ void hook_camera_step2(CInstance *self, CInstance *other) {     // obj_camera En
     rb_cam3d_after(self);
 }
 
+// the stadium image (field + stands, one sprite) drawn at 0,0: on the ground minus the stands in 3D
+typedef void (*DrawSprFn)(CInstance *self, long sprite, int colour, float sub, float x, float y,
+                          float xs, float ys, float rot, float alpha);
+void call_stadium_draw(CInstance *self, long sprite, int colour, float sub, float x, float y,
+                       float xs, float ys, float rot, float alpha) {
+    if (rb_cam3d_stadium(self, sprite, colour, sub, x, y, xs, ys, alpha)) return;
+    ((DrawSprFn)RB(0x1008d91ccULL))(self, sprite, colour, sub, x, y, xs, ys, rot, alpha);
+}
+
 // =============================================================== player control on defense
 RValue *hook_get_destination(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
     RValue *r = ORIG(get_destination)(self, other, res, argc, argv);
@@ -215,7 +226,9 @@ void hook_controller_gui(CInstance *self, CInstance *other) {
 // =============================================================== install
 void rb_install_hooks(void **tab) {
 #define HOOK(name, va, insn) tab[TAB_HOOK_BASE + HK_##name] = (void *)hook_##name;
+#define CALLSITE(name, site, target) tab[TAB_HOOK_BASE + HK_##name] = (void *)call_##name;
 #include "hooks.def"
 #undef HOOK
+#undef CALLSITE
     tab[TAB_GATE_ATTACK] = (void *)rb_gate_attack;
 }
