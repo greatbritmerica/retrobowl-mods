@@ -173,11 +173,10 @@ RValue *hook_msg_clear(CInstance *self, CInstance *other, RValue *res, int argc,
 }
 
 // =============================================================== experimental 3D camera
-RValue *hook_update_camera(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
+void hook_camera_step2(CInstance *self, CInstance *other) {     // obj_camera End Step: the real camera logic
     rb_cam3d_before(self);
-    RValue *r = ORIG(update_camera)(self, other, res, argc, argv);
+    ORIG_EV(camera_step2)(self, other);
     rb_cam3d_after(self);
-    return r;
 }
 
 // =============================================================== player control on defense

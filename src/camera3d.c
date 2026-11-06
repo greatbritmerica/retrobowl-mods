@@ -83,6 +83,10 @@ void rb_cam3d_after(CInstance *self) {
     double cam = callreal("view_get_camera", self, 1, 0, 0);
     double x = callreal("camera_get_view_x", self, 1, cam, 0), y = callreal("camera_get_view_y", self, 1, cam, 0);
     double w = callreal("camera_get_view_width", self, 1, cam, 0), h = callreal("camera_get_view_height", self, 1, cam, 0);
+    static unsigned calls;
+    if (calls++ % 600 == 0)
+        rb_log("cam3d: call %u cam %g view %.0f,%.0f %.0fx%.0f fns %p %p %p dir %g", calls, cam, x, y, w, h,
+               fn("matrix_build_lookat"), fn("camera_set_view_mat"), fn("matrix_build_projection_perspective_fov"), drive_dir());
     if (!(w > 1 && h > 1)) return;
     C.gx = x; C.gy = y; C.gw = w; C.gh = h; C.valid = 1; g_reads_since_update = 0;
     double cx = x + w / 2, cy = y + h / 2, fwd = drive_dir();
@@ -108,6 +112,12 @@ void rb_cam3d_after(CInstance *self) {
     callrv(fn("camera_set_view_mat"), self, 2, sv, &tmp); rvfree(&tmp);
     callrv(fn("camera_set_proj_mat"), self, 2, sp, &tmp); rvfree(&tmp);
     rvfree(&look); rvfree(&flat); rvfree(&view); rvfree(&proj);
+    if (calls % 600 == 1) {
+        RValue a1[1] = { R(cam) }, vm;
+        callrv(fn("camera_get_view_mat"), self, 1, a1, &vm);
+        rb_log("cam3d: view matrix after set: kind %u", vm.kind);
+        rvfree(&vm);
+    }
 
     // basis for re-projecting taps
     C.eye = eye; C.fwd = fwd;
