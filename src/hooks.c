@@ -103,6 +103,8 @@ RValue *hook_action_result(CInstance *self, CInstance *other, RValue *res, int a
     return r;
 }
 
+static int g_cpu_clearing;      // our own response call is closing the message
+
 // per-step ball update: CPU quarterback on CPU drives, ball-state log
 static double g_last_state = -1;
 RValue *hook_update_ball(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
@@ -137,9 +139,11 @@ RValue *hook_update_ball(CInstance *self, CInstance *other, RValue *res, int arg
         rb_cpuqb_action = ACT_NONE;
         RValue pr = {0}; pr.kind = RV_UNDEFINED;
         rb_vf.active = 0; rb_vf.down = 0;      // whatever happens next, the screen is the human's again
+        g_cpu_clearing = 1;
         if (act == ACT_PUNT) { rb_log("cpuqb: punting"); ((GMLScript)RB(0x100094060ULL))(self, other, &pr, 0, 0); }
         else if (act == ACT_FIELD_GOAL) { rb_log("cpuqb: kicking field goal"); ((GMLScript)RB(0x100087064ULL))(self, other, &pr, 0, 0); }
         else if (act == ACT_PLAY_4TH) { rb_log("cpuqb: going for it"); ((GMLScript)RB(0x10008b700ULL))(self, other, &pr, 0, 0); }
+        g_cpu_clearing = 0;
     }
     return r;
 }
@@ -158,6 +162,11 @@ RValue *hook_create_message(CInstance *self, CInstance *other, RValue *res, int 
         rb_log("message on CPU 4th down: \"%s\"", txt);
     }
     return r;
+}
+
+RValue *hook_msg_clear(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
+    if (!g_cpu_clearing) rb_cpuqb_fourth_closed();
+    return ORIG(msg_clear)(self, other, res, argc, argv);
 }
 
 // =============================================================== player control on defense

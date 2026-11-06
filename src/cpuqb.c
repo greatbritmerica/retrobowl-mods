@@ -247,7 +247,7 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         if (!cpu_offense) { rb_cpuqb_fourth_msg = 0; g_fourth_wait = 0; }
         else {
             rb_vf.active = 1; rb_vf.down = 0;                  // the human can't press the CPU's buttons
-            if (++g_fourth_wait >= 45) {
+            if (++g_fourth_wait >= 2) {                         // answer before anyone can tap
                 rb_cpuqb_action = fourth_decide(rb_cpuqb_fourth_msg == 1);
                 rb_cpuqb_fourth_msg = 0; g_fourth_wait = 0; g_fourth_answered = 1;
                 if (rb_cpuqb_action == ACT_FIELD_GOAL) g_fg_pending = 1;
@@ -522,4 +522,12 @@ int rb_cpuqb_target(double *x, double *y) {
     if (Q.drag <= 0) return 0;
     *x = Q.aim_x; *y = Q.aim_y;
     return 1;
+}
+
+// the 4th-down question was closed by someone else (e.g. the player tapped it): drop our answer
+void rb_cpuqb_fourth_closed(void) {
+    if (rb_cpuqb_fourth_msg) {
+        rb_log("cpuqb: 4th-down question answered by the player, keeping their choice");
+        rb_cpuqb_fourth_msg = 0; g_fourth_wait = 0; g_fourth_answered = 1;
+    }
 }
