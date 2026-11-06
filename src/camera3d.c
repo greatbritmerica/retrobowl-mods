@@ -12,9 +12,9 @@
 
 int rb_cam3d_on = 1;
 
-#define CAM_BACK    260.0     // eye distance behind the focus point
-#define CAM_HEIGHT  150.0     // eye height above the field
-#define CAM_AHEAD   220.0     // look this far downfield of the focus
+#define CAM_BACK    170.0     // eye distance behind the ball
+#define CAM_HEIGHT  95.0      // eye height above the field
+#define CAM_AHEAD   260.0     // look this far downfield of the ball
 #define CAM_FOV     60.0
 #define VIEW_GROW   4.0       // enlarge the culling box this much while drawing
 
@@ -67,6 +67,23 @@ static double drive_dir(void) {
     return 1;
 }
 
+typedef struct { double x, y; int found; } BallCtx;
+static int ball_cb(CInstance *inst, void *ctx) {
+    BallCtx *b = ctx;
+    if (rb_get_inst_real(inst, SLOT_STATE) < -9000) return 0;   // the master ball has a state
+    b->x = rb_get_builtin_real(inst, SLOT_X); b->y = rb_get_builtin_real(inst, SLOT_Y); b->found = 1;
+    return 1;
+}
+static int ball_pos(CInstance *self, double *x, double *y) {
+    if (!rb_obj_exists(OBJ_BALL)) return 0;
+    BallCtx b = { 0, 0, 0 };
+    RValue r = rb_obj_ref(OBJ_BALL);
+    rb_with(&r, self, self, ball_cb, &b);
+    if (!b.found || b.x < -9000) return 0;
+    *x = b.x; *y = b.y;
+    return 1;
+}
+
 // before the game's camera update: give it back its own view box
 void rb_cam3d_before(CInstance *self) {
     if (!rb_cam3d_on || !C.valid) return;
@@ -90,6 +107,8 @@ void rb_cam3d_after(CInstance *self) {
     if (!(w > 1 && h > 1)) return;
     C.gx = x; C.gy = y; C.gw = w; C.gh = h; C.valid = 1; g_reads_since_update = 0;
     double cx = x + w / 2, cy = y + h / 2, fwd = drive_dir();
+    double bx, by;
+    if (ball_pos(self, &bx, &by)) { cx = bx; cy = by; }       // follow the ball, not the 2D framing
 
     // bigger box so far-field tiles aren't culled
     double W = w * VIEW_GROW, H = h * VIEW_GROW;
@@ -138,4 +157,89 @@ int rb_cam3d_ground(double gui_x, double gui_y, double gui_w, double gui_h, doub
     *rx = C.eye.v[0] + d.v[0] * t;
     *ry = C.eye.v[1] + d.v[1] * t;
     return 1;
+}
+
+// ---------------------------------------------------------------- standing sprites (screen-layer pass)
+// Players and the ball are not drawn flat on the field. Instead, just before the HUD, each one's own
+// draw code is re-run on the screen layer with a transform that puts its feet where it stands in 3D
+// and scales it by distance, far to near. Height drawn upward in 2D (jumps, a thrown ball) stays up.
+int rb_cam3d_in_gui_pass;
+
+int rb_cam3d_active(void) { return rb_cam3d_on && C.valid && g_reads_since_update < 400; }
+
+static int project(double wx, double wy, double gw, double gh, double *sx, double *sy, double *depth) {
+    V3 d = sub(v3(wx, wy, 0), C.eye);
+    double zc = d.v[0]*C.f.v[0] + d.v[1]*C.f.v[1] + d.v[2]*C.f.v[2];
+    if (zc < 5) return 0;
+    double xs = (d.v[0]*C.r.v[0] + d.v[1]*C.r.v[1] + d.v[2]*C.r.v[2]) / (zc * C.tan_half * C.aspect);
+    double ys = (d.v[0]*C.u.v[0] + d.v[1]*C.u.v[1] + d.v[2]*C.u.v[2]) / (zc * C.tan_half);
+    *sx = (xs + 1) / 2 * gw; *sy = (1 - ys) / 2 * gh; *depth = zc;
+    return 1;
+}
+
+typedef struct { CInstance *inst; double depth, sx, sy, scale; int is_ball; } Spr;
+typedef struct { Spr *s; int n, cap, is_ball; double gw, gh; } SprList;
+static int spr_cb(CInstance *inst, void *ctx) {
+    SprList *L = ctx;
+    if (L->n >= L->cap) return 1;
+    double x = rb_get_builtin_real(inst, SLOT_X), y = rb_get_builtin_real(inst, SLOT_Y), sx, sy, z;
+    if (x < -9000 || !project(x, y, L->gw, L->gh, &sx, &sy, &z)) return 0;
+    if (sx < -200 || sx > L->gw + 200 || sy < -200 || sy > L->gh + 400) return 0;
+    Spr *p = &L->s[L->n++];
+    p->inst = inst; p->depth = z; p->sx = sx; p->sy = sy; p->is_ball = L->is_ball;
+    p->scale = (L->gh / 2) / (z * C.tan_half);
+    return 0;
+}
+
+static void set_world(CInstance *self, double x, double y, double s, double sx, double sy) {
+    RValue a[9] = { R(-x), R(-y), R(0), R(0), R(0), R(0), R(1), R(1), R(0) }, b[9] = { R(sx), R(sy), R(0), R(0), R(0), R(0), R(s), R(s), R(0) };
+    RValue m1, m2, m, tmp;
+    callrv(fn("matrix_build"), self, 9, a, &m1);
+    callrv(fn("matrix_build"), self, 9, b, &m2);
+    RValue mm[2] = { m1, m2 };
+    callrv(fn("matrix_multiply"), self, 2, mm, &m);
+    RValue sm[2] = { R(2), m };                          // matrix_world
+    callrv(fn("matrix_set"), self, 2, sm, &tmp); rvfree(&tmp);
+    rvfree(&m1); rvfree(&m2); rvfree(&m);
+}
+static void reset_world(CInstance *self) {
+    RValue id, tmp;
+    callrv(fn("matrix_build_identity"), self, 0, 0, &id);
+    RValue sm[2] = { R(2), id };
+    callrv(fn("matrix_set"), self, 2, sm, &tmp); rvfree(&tmp);
+    rvfree(&id);
+}
+
+void rb_cam3d_gui_pass(CInstance *self, void (*draw_player)(CInstance *), void (*draw_ball)(CInstance *)) {
+    if (!rb_cam3d_active()) return;
+    double gw = callreal("display_get_gui_width", self, 0, 0, 0), gh = callreal("display_get_gui_height", self, 0, 0, 0);
+    if (!(gw > 1 && gh > 1)) return;
+    // sky above the horizon
+    double hx, hy, hz;
+    if (project(C.eye.v[0] + C.fwd * 30000, C.eye.v[1], gw, gh, &hx, &hy, &hz) && hy > 0) {
+        double top = 0xE0A060, low = 0xF8D8A8;            // BGR: sky blue -> pale
+        double a[10] = { 0, 0, gw, hy + 2, top, top, low, low, 0 };
+        rb_call(fn("draw_rectangle_colour"), self, 9, a);
+    }
+    static Spr buf[48];
+    SprList L = { buf, 0, 48, 0, gw, gh };
+    RValue r = rb_obj_ref(OBJ_PLAYER);
+    if (rb_obj_exists(OBJ_PLAYER)) rb_with(&r, self, self, spr_cb, &L);
+    L.is_ball = 1;
+    r = rb_obj_ref(OBJ_BALL);
+    if (rb_obj_exists(OBJ_BALL)) rb_with(&r, self, self, spr_cb, &L);
+    for (int i = 1; i < L.n; i++) {                      // far to near
+        Spr k = buf[i]; int j = i - 1;
+        while (j >= 0 && buf[j].depth < k.depth) { buf[j + 1] = buf[j]; j--; }
+        buf[j + 1] = k;
+    }
+    rb_cam3d_in_gui_pass = 1;
+    for (int i = 0; i < L.n; i++) {
+        Spr *p = &buf[i];
+        double x = rb_get_builtin_real(p->inst, SLOT_X), y = rb_get_builtin_real(p->inst, SLOT_Y);
+        set_world(self, x, y, p->scale, p->sx, p->sy);
+        if (p->is_ball) draw_ball(p->inst); else draw_player(p->inst);
+    }
+    reset_world(self);
+    rb_cam3d_in_gui_pass = 0;
 }

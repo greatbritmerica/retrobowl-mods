@@ -188,8 +188,22 @@ RValue *hook_get_destination(CInstance *self, CInstance *other, RValue *res, int
 }
 
 void hook_player_draw(CInstance *self, CInstance *other) {
+    if (rb_cam3d_active() && !rb_cam3d_in_gui_pass) return;      // 3D camera: drawn standing, later
     ORIG_EV(player_draw)(self, other);
     rb_def_draw(self);
+}
+
+void hook_ball_draw(CInstance *self, CInstance *other) {
+    if (rb_cam3d_active() && !rb_cam3d_in_gui_pass) return;
+    ORIG_EV(ball_draw)(self, other);
+}
+
+static void gui_draw_player(CInstance *p) { hook_player_draw(p, p); }
+static void gui_draw_ball(CInstance *b) { hook_ball_draw(b, b); }
+
+void hook_controller_gui(CInstance *self, CInstance *other) {
+    rb_cam3d_gui_pass(self, gui_draw_player, gui_draw_ball);      // standing players + sky, under the HUD
+    ORIG_EV(controller_gui)(self, other);
 }
 
 // =============================================================== install
