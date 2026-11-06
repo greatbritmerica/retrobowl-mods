@@ -9,6 +9,7 @@
 #include "input.h"
 #include "defense.h"
 #include "cpuqb.h"
+#include "camera3d.h"
 
 #define VA_S_DO_DIVE 0x10012b150ULL   // the game's dive move (used for the human ball carrier)
 #define DIVE_RANGE   55.0
@@ -116,6 +117,7 @@ void rb_def_step(CInstance *ball, CInstance *other, int cpu_offense, double los_
         double m = hypot(gx - D.ax, gy - D.ay);
         if (m > D.moved) D.moved = m;
         double dx = gx - D.ax, dy = gy - D.ay;
+        if (rb_cam3d_active()) { double rx, ry; rb_cam3d_rotate_drag(dx, dy, &rx, &ry); dx = rx; dy = ry; }
         if (m > STICK_DEAD) {
             double a = atan2(-dy, dx) * 57.29577951308232;
             if (a < 0) a += 360;

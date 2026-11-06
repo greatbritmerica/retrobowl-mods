@@ -74,6 +74,8 @@ static void note(const char *name, int argc, RValue *args, double val) {
 
 // with the 3D camera on, "where on the field is the finger" has to go through the perspective
 static int cam3d_room(CInstance *self, int want_y, double *out);
+// ...and drags are rotated around the point where the finger went down (taps stay exact)
+static int cam3d_gui(CInstance *self, int want_y, double raw, double *out);
 
 // ---------------------------------------------------------------- wrappers
 #define WRAP_FN(id)                                                                         \
@@ -82,6 +84,8 @@ static int cam3d_room(CInstance *self, int want_y, double *out);
         double v;                                                                           \
         if (vf_value(#id, argc, args, &v)) { res->real = v; res->flags = 0; res->kind = RV_REAL; return; } \
         orig_##id(res, self, other, argc, args);                                            \
+        if ((!strcmp(#id, "device_mouse_x_to_gui") || !strcmp(#id, "device_mouse_y_to_gui")) &&  \
+            cam3d_gui(self, #id[13] == 'y', rb_rv_real(res), &v)) { res->real = v; res->flags = 0; res->kind = RV_REAL; } \
         if ((!strcmp(#id, "device_mouse_x") || !strcmp(#id, "device_mouse_y")) &&            \
             cam3d_room(self, #id[13] == 'y', &v)) { res->real = v; res->flags = 0; res->kind = RV_REAL; } \
         if (rb_input_log) note(#id, argc, args, rb_rv_real(res));                           \
@@ -178,5 +182,25 @@ static int cam3d_room(CInstance *self, int want_y, double *out) {
     double rx, ry;
     if (!rb_cam3d_ground(gx, gy, gw, gh, &rx, &ry)) return 0;
     *out = want_y ? ry : rx;
+    return 1;
+}
+
+static struct { int down; double ax, ay; } T3;
+static int cam3d_gui(CInstance *self, int want_y, double raw, double *out) {
+    if (!rb_cam3d_active() || !orig_device_mouse_check_button) return 0;
+    RValue res = {0}, a[2] = {{{0}}};
+    a[0].kind = RV_REAL; a[0].real = 0; a[1].kind = RV_REAL; a[1].real = 1;
+    orig_device_mouse_check_button(&res, self, self, 2, a);
+    int down = rb_rv_real(&res) > 0.5;
+    RValue d0 = {0}; d0.kind = RV_REAL; d0.real = 0;
+    orig_device_mouse_x_to_gui(&res, self, self, 1, &d0); double gx = rb_rv_real(&res);
+    orig_device_mouse_y_to_gui(&res, self, self, 1, &d0); double gy = rb_rv_real(&res);
+    if (down && !T3.down) { T3.ax = gx; T3.ay = gy; }
+    T3.down = down;
+    if (!down) { T3.ax = gx; T3.ay = gy; return 0; }
+    double ox, oy;
+    rb_cam3d_rotate_drag(gx - T3.ax, gy - T3.ay, &ox, &oy);
+    *out = want_y ? T3.ay + oy : T3.ax + ox;
+    (void)raw;
     return 1;
 }

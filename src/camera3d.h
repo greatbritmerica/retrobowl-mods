@@ -7,3 +7,5 @@ int  rb_cam3d_ground(double gui_x, double gui_y, double gui_w, double gui_h, dou
 extern int rb_cam3d_in_gui_pass;
 int  rb_cam3d_active(void);
 void rb_cam3d_gui_pass(CInstance *self, void (*draw_player)(CInstance *), void (*draw_ball)(CInstance *));
+double rb_cam3d_fwd(void);
+void rb_cam3d_rotate_drag(double dx, double dy, double *ox, double *oy);

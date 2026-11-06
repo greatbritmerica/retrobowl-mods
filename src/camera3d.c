@@ -108,7 +108,12 @@ void rb_cam3d_after(CInstance *self) {
     C.gx = x; C.gy = y; C.gw = w; C.gh = h; C.valid = 1; g_reads_since_update = 0;
     double cx = x + w / 2, cy = y + h / 2, fwd = drive_dir();
     double bx, by;
-    if (ball_pos(self, &bx, &by)) { cx = bx; cy = by; }       // follow the ball, not the 2D framing
+    static double sx, sy; static int have;
+    if (ball_pos(self, &bx, &by)) {                           // follow the ball, smoothly
+        if (!have || hypot(bx - sx, by - sy) > 600) { sx = bx; sy = by; have = 1; }
+        sx += (bx - sx) * 0.18; sy += (by - sy) * 0.18;
+        cx = sx; cy = sy;
+    }
 
     // bigger box so far-field tiles aren't culled
     double W = w * VIEW_GROW, H = h * VIEW_GROW;
@@ -215,8 +220,11 @@ void rb_cam3d_gui_pass(CInstance *self, void (*draw_player)(CInstance *), void (
     double gw = callreal("display_get_gui_width", self, 0, 0, 0), gh = callreal("display_get_gui_height", self, 0, 0, 0);
     if (!(gw > 1 && gh > 1)) return;
     // sky above the horizon
-    double hx, hy, hz;
+    double hx, hy, hz, ex, ey, ez;
+    double room_w = rb_get_builtin_real(self, 0x100fb0aa8ULL);          // room_width
     if (project(C.eye.v[0] + C.fwd * 30000, C.eye.v[1], gw, gh, &hx, &hy, &hz) && hy > 0) {
+        double far_x = C.fwd > 0 ? (room_w > 0 ? room_w : 4000) : 0;      // the stadium ends here
+        if (project(far_x, C.eye.v[1], gw, gh, &ex, &ey, &ez) && ey > hy) hy = ey;
         double top = 0xE0A060, low = 0xF8D8A8;            // BGR: sky blue -> pale
         double a[10] = { 0, 0, gw, hy + 2, top, top, low, low, 0 };
         rb_call(fn("draw_rectangle_colour"), self, 9, a);
@@ -242,4 +250,14 @@ void rb_cam3d_gui_pass(CInstance *self, void (*draw_player)(CInstance *), void (
     }
     reset_world(self);
     rb_cam3d_in_gui_pass = 0;
+}
+
+double rb_cam3d_fwd(void) { return C.fwd ? C.fwd : 1; }
+
+// a screen drag (dx,dy) in the 3D view -> the drag the top-down game expects
+// (screen up = downfield = +fwd room x; screen right = +fwd room y)
+void rb_cam3d_rotate_drag(double dx, double dy, double *ox, double *oy) {
+    double f = rb_cam3d_fwd();
+    *ox = -f * dy;
+    *oy = f * dx;
 }
