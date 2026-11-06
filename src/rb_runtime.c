@@ -66,7 +66,22 @@ const char *rb_rv_str(RValue *v, char *buf, int n) {
     }
 }
 
+static int count_cb(CInstance *inst, void *ctx) { (void)inst; (*(int *)ctx)++; return 1; }
+
+// does at least one instance of the object exist? (reading a variable of a missing object
+// raises a GML error, which aborts the app)
+int rb_obj_exists(int object_index) {
+    if (!rb_base) return 0;
+    CInstance *g = *(CInstance **)RB(0x1010c82d8ULL);      // global instance: any valid self works
+    if (!g) return 0;
+    RValue ref = rb_obj_ref(object_index);
+    int n = 0;
+    rb_with(&ref, g, g, count_cb, &n);
+    return n > 0;
+}
+
 double rb_get_obj_real(int object_index, uint64_t slot_va) {
+    if (!rb_obj_exists(object_index)) return -9999.0;
     RValue ref = rb_obj_ref(object_index);
     RValue out = {0};
     out.kind = RV_UNDEFINED;
@@ -96,6 +111,7 @@ double rb_get_builtin_real(CInstance *inst, uint64_t slot_va) {
 }
 
 void rb_set_obj_real(int object_index, uint64_t slot_va, double val) {
+    if (!rb_obj_exists(object_index)) return;
     RValue ref = rb_obj_ref(object_index);
     RValue v = {0};
     v.real = val;

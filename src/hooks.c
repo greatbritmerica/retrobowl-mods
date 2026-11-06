@@ -149,10 +149,11 @@ RValue *hook_create_message(CInstance *self, CInstance *other, RValue *res, int 
     RValue *r = ORIG(create_message)(self, other, res, argc, argv);
     char b[64];
     const char *txt = argc > 0 ? rb_rv_str(argv[0], b, sizeof b) : "";
+    if (!(strstr(txt, "4th") || strstr(txt, "ourth"))) return r;          // only the 4th-down question
+    if (!rb_obj_exists(OBJ_CONTROLLER)) return r;                          // not in a match
     double human = rb_get_obj_real(OBJ_MASTER, SLOT_PLAYERTEAMINDEX);
     double poss = rb_get_obj_real(OBJ_CONTROLLER, SLOT_POSSESSION);
-    if (human >= 0 && poss >= 0 && poss != human && rb_get_obj_real(OBJ_CONTROLLER, SLOT_DOWN) >= 4 &&
-        (strstr(txt, "4th") || strstr(txt, "ourth"))) {
+    if (human >= 0 && poss >= 0 && poss != human && rb_get_obj_real(OBJ_CONTROLLER, SLOT_DOWN) >= 4) {
         rb_cpuqb_fourth_msg = (strstr(txt, "oal") || strstr(txt, "OAL")) ? 1 : 2;
         rb_log("message on CPU 4th down: \"%s\"", txt);
     }

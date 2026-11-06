@@ -91,7 +91,8 @@ static inline int rb_slot(uint64_t slot_va) { return *(int32_t *)RB(slot_va); }
 
 // ---------------------------------------------------------------- helpers (rb_runtime.c)
 void   rb_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-RValue rb_obj_ref(int object_index);                       // RValue that refers to an object (kind 15)
+RValue rb_obj_ref(int object_index);
+int    rb_obj_exists(int object_index);                       // RValue that refers to an object (kind 15)
 double rb_get_obj_real(int object_index, uint64_t slot_va); // object_index.var  (first instance)
 double rb_get_inst_real(CInstance *inst, uint64_t slot_va); // inst.var
 double rb_get_builtin_real(CInstance *inst, uint64_t slot_va); // inst.x, inst.direction ...
