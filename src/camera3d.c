@@ -84,6 +84,28 @@ static int ball_pos(CInstance *self, double *x, double *y) {
     return 1;
 }
 
+// what the camera follows: whoever holds the ball (QB on the dropback, then the receiver or runner).
+// Returns 1 with a position, 2 if the ball is in the air / loose (hold still), 0 if unknown.
+static int grab_cb(CInstance *inst, void *ctx) { *(CInstance **)ctx = inst; return 1; }
+static int focus_pos(CInstance *self, double *x, double *y) {
+    CInstance *g = *(CInstance **)RB(0x1010c82d8ULL);               // global instance
+    if (!g) return 0;
+    RValue *mb = rb_inst_var(g, SLOT_MASTER_BALL);
+    if (!mb || mb->kind == RV_UNDEFINED) return 0;
+    RValue c = *mb; CInstance *ball = 0;
+    rb_with(&c, self, self, grab_cb, &ball);
+    if (!ball) return 0;
+    RValue *h = rb_inst_var(ball, SLOT_HOLDER);
+    if (!h || h->kind == RV_UNDEFINED || (h->kind == RV_REAL && h->real < 0)) return 2;
+    RValue hc = *h; CInstance *holder = 0;
+    rb_with(&hc, self, self, grab_cb, &holder);
+    if (!holder) return 2;
+    double hx = rb_get_builtin_real(holder, SLOT_X), hy = rb_get_builtin_real(holder, SLOT_Y);
+    if (hx < -9000) return 2;
+    *x = hx; *y = hy;
+    return 1;
+}
+
 // before the game's camera update: give it back its own view box
 void rb_cam3d_before(CInstance *self) {
     if (!rb_cam3d_on || !C.valid) return;
@@ -109,11 +131,13 @@ void rb_cam3d_after(CInstance *self) {
     double cx = x + w / 2, cy = y + h / 2, fwd = drive_dir();
     double bx, by;
     static double sx, sy; static int have;
-    if (ball_pos(self, &bx, &by)) {                           // follow the ball, smoothly
+    int fr = focus_pos(self, &bx, &by);
+    if (fr == 0 && ball_pos(self, &bx, &by)) fr = 1;           // fallback: the ball itself
+    if (fr == 1) {                                             // follow the ball carrier, smoothly
         if (!have || hypot(bx - sx, by - sy) > 600) { sx = bx; sy = by; have = 1; }
-        sx += (bx - sx) * 0.18; sy += (by - sy) * 0.18;
-        cx = sx; cy = sy;
+        sx += (bx - sx) * 0.15; sy += (by - sy) * 0.15;
     }
+    if (have) { cx = sx; cy = sy; }                            // ball in the air: stay behind the play
 
     // bigger box so far-field tiles aren't culled
     double W = w * VIEW_GROW, H = h * VIEW_GROW;
