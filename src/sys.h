@@ -18,6 +18,8 @@ int fclose(FILE *f);
 int fprintf(FILE *f, const char *fmt, ...);
 int fputs(const char *s, FILE *f);
 int fflush(FILE *f);
+char *fgets(char *s, int n, FILE *f);
+int sscanf(const char *s, const char *fmt, ...);
 int snprintf(char *buf, size_t n, const char *fmt, ...);
 int vsnprintf(char *buf, size_t n, const char *fmt, va_list ap);
 char *getenv(const char *name);

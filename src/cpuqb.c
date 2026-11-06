@@ -10,6 +10,8 @@
 #include "sys.h"
 #include "input.h"
 #include "cpuqb.h"
+#include "brain.h"
+#include "defense.h"
 
 #define THROW_K      0.1159     // fallback ball speed per pixel of drag (a strong arm)
 #define DRAG_DECAY   0.986
@@ -40,6 +42,7 @@ static struct {
     int fourth_done, fg_peak_frames; double fg_last_pow;
     double btn_x, btn_y;
     unsigned sw_t, sw_cool; double sw_dir, sw_x, sw_y;   // juke swipe in progress
+    double prev_st, th_open, th_hdist; int thrown, caught, ran, scored;   // results, for learning
 } Q;
 
 static int g_fg_pending;       // CPU chose a field goal; survives the kick set-up
@@ -144,7 +147,7 @@ static void lead_point(int i, double *lx, double *ly, double *speed) {
 // Defenders react once the ball is up: assume each keeps his momentum for part of the flight and
 // then gains DEF_CLOSE px/frame on the ball. Clearance = how far the nearest one still is.
 #define DEF_CLOSE  0.30
-#define SAFE_OPEN  15.0       // clearance needed to call a man open
+#define SAFE_OPEN  (rb_brain.safe_open)   // clearance needed to call a man open (learned)
 #define LANE_MIN   10.0       // clearance needed along the catchable part of the flight
 
 static double clearance_at(double bx, double by, double t) {
@@ -187,7 +190,12 @@ static int pick_receiver(double *score_out, double *open_out) {
         double T = AIR_K * v;
         double at_catch = clearance_at(lx, ly, T);
         double lane = lane_clearance(lx, ly, v);
-        double open = at_catch < lane + (SAFE_OPEN - LANE_MIN) ? at_catch : lane + (SAFE_OPEN - LANE_MIN);
+        double open = at_catch < lane + 5 ? at_catch : lane + 5;
+        double hx, hy;                                        // the defender the player controls is smarter:
+        if (rb_def_human(&hx, &hy)) {                         // he gets extra respect, learned from results
+            double hd = hypot(hx - lx, hy - ly) - DEF_CLOSE * T * 1.5 - rb_brain.hdef_margin;
+            if (hd < open) open = hd;
+        }
         if (r->turn > 6) open -= 15;                          // mid-cut: the lead won't hold
         double gain = (lx - Q.los_x) * Q.fwd;
         double score = open * 0.8 + gain * (Q.deep ? 0.45 : 0.25) - (open < SAFE_OPEN ? 80 : 0) + frand() * 10;
@@ -259,6 +267,16 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
     double st = rb_get_inst_real(ball, SLOT_STATE);
     if (!cpu_offense) { rb_vf.active = 0; Q.phase = PH_IDLE; Q.ball = 0; g_fg_pending = 0; g_fourth_answered = 0; return; }
     if (ball != Q.ball) new_play(ball);
+    if (st != Q.prev_st && Q.fwd) {                                     // results -> learning
+        double bx = rb_get_builtin_real(ball, SLOT_X), yds = (bx - Q.los_x) * Q.fwd / 20.5;
+        if (Q.thrown && !Q.scored) {
+            if (Q.prev_st == 3 && st == 9) { Q.scored = 1; rb_brain_pass(BR_INT, 0, Q.th_open, Q.th_hdist, rb_def_jumped()); }
+            else if (Q.prev_st == 3 && st == 7) { Q.scored = 1; rb_brain_pass(BR_INCOMPLETE, 0, Q.th_open, Q.th_hdist, rb_def_jumped()); }
+            else if (Q.prev_st == 3 && st == 5) Q.caught = 1;
+            else if (Q.caught && (st == 4 || st == 6)) { Q.scored = 1; rb_brain_pass(BR_COMPLETE, yds, Q.th_open, Q.th_hdist, rb_def_jumped()); }
+        } else if (Q.ran && !Q.scored && (st == 4 || st == 6)) { Q.scored = 1; rb_brain_run(yds); }
+        Q.prev_st = st;
+    }
 
     // virtual finger owns the input while the CPU's play is live
     int live = (st == 0 || st == 1 || st == 2 || st == 3 || st == 5 || st == 13 || st == 18 || st == 19)
@@ -290,9 +308,10 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         Q.down = rb_get_obj_real(OBJ_CONTROLLER, SLOT_DOWN);
         if (Q.down < 4) g_fourth_answered = 0;
         Q.yards = rb_get_obj_real(OBJ_CONTROLLER, SLOT_YARDS);
-        double p_run = 0.38;
-        if (Q.yards > 0 && Q.yards <= 2) p_run = 0.65;
-        else if (Q.yards >= 8) p_run = 0.22;
+        rb_brain_load();
+        double p_run = rb_brain_run_rate();
+        if (Q.yards > 0 && Q.yards <= 2) p_run += 0.25;
+        else if (Q.yards >= 8) p_run -= 0.16;
         if (Q.down >= 3 && Q.yards >= 4) p_run = 0.10;
         Q.is_run = frand() < p_run;
         Q.deep = !Q.is_run && frand() < 0.18;
@@ -349,7 +368,7 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
             finger(1, P0X, P0Y);
         } else {
             finger(0, P0X, P0Y);
-            if (st != 0) Q.phase = PH_DONE;
+            if (st != 0) { Q.phase = PH_DONE; Q.ran = 1; }
             else if (Q.t - Q.t_phase > 30) { Q.is_run = 0; Q.phase = PH_PRESNAP; Q.t_phase = Q.t + 10; }
         }
         break;
@@ -392,7 +411,7 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
             Q.phase = PH_SCRAMBLE_GO; Q.hold = 0; Q.scrambled = 1;
             rb_log("cpuqb: scramble (pressure %.0f, lane %.0f, best open %.0f)", pressure, lane, open);
         } else if (go) {
-            Q.tgt = r; Q.phase = PH_AIM; Q.hold = 0;
+            Q.tgt = r; Q.phase = PH_AIM; Q.hold = 0; Q.th_open = open;
             rb_log("cpuqb: throw to #%d open %.0f pressure %.0f after %u frames", r, open, pressure, held);
         } else if (away) {
             Q.tgt = -1; Q.phase = PH_AIM; Q.hold = 0;
@@ -420,6 +439,11 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         if (++Q.hold >= 14) {                                   // let the game's drag lerp settle
             finger(0, rb_vf.gui_x, rb_vf.gui_y);
             Q.phase = PH_DONE;
+            if (Q.tgt >= 0) {
+                double hx, hy;
+                Q.thrown = 1;
+                Q.th_hdist = rb_def_human(&hx, &hy) ? hypot(hx - lx, hy - ly) : 999;
+            }
             rb_log("cpuqb: release toward %.0f,%.0f drag %.0f (qb %.0f,%.0f)", lx, ly, drag, Q.qbx, Q.qby);
         }
         break;
@@ -518,6 +542,13 @@ void rb_cpuqb_info(double *los_x, double *fwd, double *qbx, double *qby) {
 }
 
 // where the CPU's last throw is headed (0 if none this play)
+// the receiver the CPU threw to (current position)
+int rb_cpuqb_receiver(double *x, double *y) {
+    if (Q.tgt < 0 || Q.tgt >= Q.nof || !Q.of[Q.tgt].seen) return 0;
+    *x = Q.of[Q.tgt].x; *y = Q.of[Q.tgt].y;
+    return 1;
+}
+
 int rb_cpuqb_target(double *x, double *y) {
     if (Q.drag <= 0) return 0;
     *x = Q.aim_x; *y = Q.aim_y;

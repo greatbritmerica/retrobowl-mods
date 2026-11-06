@@ -30,6 +30,7 @@ static struct {
     double prev_st, bx, by, bvx, bvy;     // ball / carrier tracking
     unsigned dive_until, break_until; double dive_dir, tx, ty;
     int dove;                             // one dive per play: after that he's on the ground
+    unsigned break_start; int jumped;
 } D;
 
 typedef struct { double x, y; CInstance *best; double bd; } NearCtx;
@@ -66,9 +67,11 @@ static void tap_action(CInstance *ball, CInstance *other, double st) {
         rb_log("defense: DIVE at carrier (%.0f away, heading %.0f)", hypot(D.bx - cx, D.by - cy), D.dive_dir);
         return;
     }
-    if (D.ctrl && st == 3 && rb_cpuqb_target(&D.tx, &D.ty)) {                     // break on the ball
-        D.break_until = D.t + BREAK_FRAMES;
-        rb_log("defense: break on the ball -> %.0f,%.0f", D.tx, D.ty);
+    if (D.ctrl && st == 3 && rb_cpuqb_receiver(&D.tx, &D.ty)) {                   // jump the route
+        D.break_start = D.t + 10;                                                  // a defender's reaction time
+        D.break_until = D.break_start + BREAK_FRAMES;
+        D.jumped = 1;
+        rb_log("defense: jumping the route toward the receiver");
         return;
     }
     CInstance *n = nearest_defender(ball, other, D.bx, D.by);                        // switch
@@ -145,7 +148,8 @@ void rb_def_after_ai(CInstance *player) {
         D.break_until = 0;
         return;
     }
-    if (D.t < D.break_until) {                                  // sprint to the catch point
+    if (D.t >= D.break_start && D.t < D.break_until) {         // chase the receiver (not the ball's landing spot)
+        rb_cpuqb_receiver(&D.tx, &D.ty);
         double x = rb_get_builtin_real(player, SLOT_X), y = rb_get_builtin_real(player, SLOT_Y);
         if (hypot(D.tx - x, D.ty - y) > 6) {
             rb_set_inst_real(player, SLOT_JDIR, dir_to(x, y, D.tx, D.ty));
@@ -169,3 +173,10 @@ void rb_def_draw(CInstance *player) {
     double dot[6] = { x, y - 38, 5, col, col, 0 };
     rb_call(f_circle, player, 6, dot);
 }
+
+int rb_def_human(double *x, double *y) {
+    if (!D.active || !D.ctrl) return 0;
+    *x = rb_get_builtin_real(D.ctrl, SLOT_X); *y = rb_get_builtin_real(D.ctrl, SLOT_Y);
+    return *x > -9000;
+}
+int rb_def_jumped(void) { return D.jumped; }

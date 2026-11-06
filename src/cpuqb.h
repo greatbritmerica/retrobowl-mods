@@ -8,3 +8,4 @@ extern int rb_cpuqb_action;      // run by hooks.c after the ball update returns
 extern int rb_cpuqb_fourth_msg;  // set by the message hook: 1 = FG offered, 2 = punt offered
 int rb_cpuqb_target(double *x, double *y);
 void rb_cpuqb_fourth_closed(void);
+int rb_cpuqb_receiver(double *x, double *y);
