@@ -3,4 +3,6 @@
 // once per ball step, before the game's own ball update; cpu_offense = CPU has the ball on the field
 void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense);
 void rb_cpuqb_info(double *los_x, double *fwd, double *qbx, double *qby);
-extern int rb_cpuqb_punt_pending;
+enum { ACT_NONE, ACT_PUNT, ACT_FIELD_GOAL, ACT_PLAY_4TH };
+extern int rb_cpuqb_action;      // run by hooks.c after the ball update returns
+extern int rb_cpuqb_fourth_msg;  // set by the message hook: 1 = FG offered, 2 = punt offered

@@ -22,11 +22,17 @@ int rb_input_log = 0;           // log every change of an input value
 unsigned rb_frame;              // advanced by the ball update hook
 VirtualFinger rb_vf;
 
-void rb_vf_frame(void) { rb_vf.prev_down = rb_vf.down; }
+static unsigned g_vf_calls;    // input reads since the CPU last drove the finger
+void rb_vf_frame(void) { rb_vf.prev_down = rb_vf.down; g_vf_calls = 0; }
 
 // value the virtual finger reports for each built-in (argc/args as the game passed them)
 static int vf_value(const char *id, int argc, RValue *args, double *out) {
     if (!rb_vf.active) return 0;
+    if (++g_vf_calls > 600) {             // nobody is driving the finger any more (ball gone): give input back
+        rb_vf.active = 0; rb_vf.down = rb_vf.prev_down = 0;
+        rb_log("input: virtual finger released by watchdog");
+        return 0;
+    }
     int dev = 0;
     if (!strncmp(id, "device_", 7) && argc > 0) dev = (int)rb_rv_real(&args[0]);
     int other_dev = dev != 0;

@@ -42,8 +42,11 @@ static struct {
     unsigned sw_t, sw_cool; double sw_dir, sw_x, sw_y;   // juke swipe in progress
 } Q;
 
-int rb_cpuqb_punt_pending;     // hooks.c performs the punt after the ball update returns
-static int g_fg_pending;       // CPU tapped the field goal button; survives the kick set-up
+static int g_fg_pending;       // CPU chose a field goal; survives the kick set-up
+int rb_cpuqb_fourth_msg;       // 4th-down question on screen: 1 = FG offered, 2 = punt offered
+static unsigned g_fourth_wait;
+static int g_fourth_answered;  // the question was answered for this down (don't punt off the field button)
+int rb_cpuqb_action;           // what hooks.c should run after the ball update (ACT_*)
 
 static double g_k_per_mtp;       // speed-per-drag / my_throw_power, measured from a real throw
 
@@ -226,10 +229,34 @@ static void finger(int down, double gx, double gy) {
     rb_vf.down = down; rb_vf.gui_x = gx; rb_vf.gui_y = gy;
 }
 
+// The game asks "Play 4th down or go for field goal?" (or punt) before the CPU's 4th-down play.
+// Hold the human off the buttons for a moment, then answer it like a coach would.
+static int fourth_decide(int fg_offered) {
+    double down = rb_get_obj_real(OBJ_CONTROLLER, SLOT_DOWN), yards = rb_get_obj_real(OBJ_CONTROLLER, SLOT_YARDS);
+    int go = yards > 0 && yards <= 1.2 && frand() < (fg_offered ? 0.35 : 0.25);
+    rb_log("cpuqb: 4th-down question (%s offered), 4th and %g -> %s", fg_offered ? "field goal" : "punt", yards,
+           go ? "GO FOR IT" : fg_offered ? "FIELD GOAL" : "PUNT");
+    (void)down;
+    if (go) return ACT_PLAY_4TH;
+    return fg_offered ? ACT_FIELD_GOAL : ACT_PUNT;
+}
+
 void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
     rb_vf_frame();
+    if (rb_cpuqb_fourth_msg) {
+        if (!cpu_offense) { rb_cpuqb_fourth_msg = 0; g_fourth_wait = 0; }
+        else {
+            rb_vf.active = 1; rb_vf.down = 0;                  // the human can't press the CPU's buttons
+            if (++g_fourth_wait >= 45) {
+                rb_cpuqb_action = fourth_decide(rb_cpuqb_fourth_msg == 1);
+                rb_cpuqb_fourth_msg = 0; g_fourth_wait = 0; g_fourth_answered = 1;
+                if (rb_cpuqb_action == ACT_FIELD_GOAL) g_fg_pending = 1;
+            }
+            return;
+        }
+    }
     double st = rb_get_inst_real(ball, SLOT_STATE);
-    if (!cpu_offense) { rb_vf.active = 0; Q.phase = PH_IDLE; Q.ball = 0; g_fg_pending = 0; return; }
+    if (!cpu_offense) { rb_vf.active = 0; Q.phase = PH_IDLE; Q.ball = 0; g_fg_pending = 0; g_fourth_answered = 0; return; }
     if (ball != Q.ball) new_play(ball);
 
     // virtual finger owns the input while the CPU's play is live
@@ -261,6 +288,7 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         Q.los_x = Q.qbx + Q.fwd * 35;
         Q.t_phase = 40 + arc4random_uniform(40);              // snap after this many frames
         Q.down = rb_get_obj_real(OBJ_CONTROLLER, SLOT_DOWN);
+        if (Q.down < 4) g_fourth_answered = 0;
         Q.yards = rb_get_obj_real(OBJ_CONTROLLER, SLOT_YARDS);
         double p_run = 0.45;
         if (Q.yards > 0 && Q.yards <= 2) p_run = 0.65;
@@ -277,7 +305,7 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
     case PH_PRESNAP:
         finger(0, P0X, P0Y);
         if (st != 0 || Q.t < Q.t_phase) break;
-        if (Q.down >= 4 && !Q.fourth_done) {                    // 4th down: kick or go for it
+        if (Q.down >= 4 && !Q.fourth_done && !g_fourth_answered) {   // 4th down: kick or go for it
             Q.fourth_done = 1;
             CInstance *btn = 0;
             RValue br = rb_obj_ref(OBJ_BTN_FIELDGOAL);
@@ -288,7 +316,7 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
                 int punt = strstr(txt, "unt") || strstr(txt, "UNT");
                 int go = Q.yards > 0 && Q.yards <= 1.2 && frand() < (punt ? 0.25 : 0.35);
                 rb_log("cpuqb: 4th and %g, button \"%s\" -> %s", Q.yards, txt, go ? "GO FOR IT" : punt ? "PUNT" : "FIELD GOAL");
-                if (!go && punt) { rb_cpuqb_punt_pending = 1; Q.phase = PH_DONE; break; }
+                if (!go && punt) { rb_cpuqb_action = ACT_PUNT; Q.phase = PH_DONE; break; }
                 if (!go) {
                     double bx = rb_get_builtin_real(btn, SLOT_X), by = rb_get_builtin_real(btn, SLOT_Y);
                     Q.btn_x = bx + rb_get_builtin_real(btn, SLOT_SPRITE_WIDTH) / 2;

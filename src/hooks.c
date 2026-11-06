@@ -132,11 +132,29 @@ RValue *hook_update_ball(CInstance *self, CInstance *other, RValue *res, int arg
     } else if (rb_frame - last_kick_log > 120) rb_input_log = 0;
 
     RValue *r = ORIG(update_ball)(self, other, res, argc, argv);
-    if (rb_cpuqb_punt_pending) {                                 // CPU chose to punt: same as tapping "yes"
-        rb_cpuqb_punt_pending = 0;
+    if (rb_cpuqb_action) {                     // CPU 4th-down call, made the same way the buttons do
+        int act = rb_cpuqb_action;
+        rb_cpuqb_action = ACT_NONE;
         RValue pr = {0}; pr.kind = RV_UNDEFINED;
-        rb_log("cpuqb: punting");
-        ((GMLScript)RB(0x100094060ULL))(self, other, &pr, 0, 0);   // gml_Script_btn_response_punt_yes
+        rb_vf.active = 0; rb_vf.down = 0;      // whatever happens next, the screen is the human's again
+        if (act == ACT_PUNT) { rb_log("cpuqb: punting"); ((GMLScript)RB(0x100094060ULL))(self, other, &pr, 0, 0); }
+        else if (act == ACT_FIELD_GOAL) { rb_log("cpuqb: kicking field goal"); ((GMLScript)RB(0x100087064ULL))(self, other, &pr, 0, 0); }
+        else if (act == ACT_PLAY_4TH) { rb_log("cpuqb: going for it"); ((GMLScript)RB(0x10008b700ULL))(self, other, &pr, 0, 0); }
+    }
+    return r;
+}
+
+// 4th-down question on a CPU drive: let the CPU answer it
+RValue *hook_create_message(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
+    RValue *r = ORIG(create_message)(self, other, res, argc, argv);
+    char b[64];
+    const char *txt = argc > 0 ? rb_rv_str(argv[0], b, sizeof b) : "";
+    double human = rb_get_obj_real(OBJ_MASTER, SLOT_PLAYERTEAMINDEX);
+    double poss = rb_get_obj_real(OBJ_CONTROLLER, SLOT_POSSESSION);
+    if (human >= 0 && poss >= 0 && poss != human && rb_get_obj_real(OBJ_CONTROLLER, SLOT_DOWN) >= 4 &&
+        (strstr(txt, "4th") || strstr(txt, "ourth"))) {
+        rb_cpuqb_fourth_msg = (strstr(txt, "oal") || strstr(txt, "OAL")) ? 1 : 2;
+        rb_log("message on CPU 4th down: \"%s\"", txt);
     }
     return r;
 }
