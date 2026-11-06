@@ -38,8 +38,8 @@ static uint64_t g_t_frame; static unsigned g_t_frames;
 static struct { RValue look, view, proj; int have; unsigned frame; } M;   // this frame's matrices
 
 static void *fn(const char *name) {          // cached by the literal's address
-    static const char *names[24]; static void *fns[24];
-    for (int i = 0; i < 24; i++) {
+    static const char *names[64]; static void *fns[64];
+    for (int i = 0; i < 64; i++) {
         if (names[i] == name) return fns[i];
         if (!names[i]) { names[i] = name; fns[i] = rb_builtin(name); return fns[i]; }
     }
@@ -399,6 +399,7 @@ static void draw_sky(CInstance *self) {
     callrv(fn("matrix_build_lookat"), self, 9, la, &v2);
     RValue po[4] = { R(gw), R(gh), R(1), R(32000) };
     callrv(fn("matrix_build_projection_ortho"), self, 4, po, &p2);
+    if (v2.kind == RV_UNDEFINED || p2.kind == RV_UNDEFINED) { rvfree(&v2); rvfree(&p2); return; }
     mset(self, 0, v2); mset(self, 1, p2);
     double top = 0xE0A060, low = 0xF8D8A8;            // BGR: sky blue -> pale at the horizon
     double a[9] = { 0, 0, gw, hy + 2, top, top, low, low, 0 };
@@ -415,11 +416,15 @@ static double array_real(CInstance *self, RValue arr, int i) {
     return d;
 }
 
-long rb_cam3d_spr_draw(RbDrawSprFn orig, CInstance *self, long sprite, int colour, float sub, float x, float y,
+long rb_cam3d_spr_draw(RbDrawSprFn orig, CInstance *self, long sprite, long colour, float sub, float x, float y,
                        float xs, float ys, float rot, float alpha) {
     int fans = sprite == SPR_FANS || sprite == SPR_FANS_CO, field = sprite == SPR_FIELD || sprite == SPR_FIELD_CO;
-    if ((!fans && !field) || !M.have) return orig(self, sprite, colour, sub, x, y, xs, ys, rot, alpha);
+    if ((!fans && !field) || !M.have || M.frame < 10) return orig(self, sprite, colour, sub, x, y, xs, ys, rot, alpha);
     uint64_t t0 = mach_absolute_time();
+    static int crumb;
+    #define CRUMB(n, msg) do { if (crumb < (n)) { crumb = (n); rb_log("cam3d: stage %d %s (spr %ld self %p)", n, msg, sprite, (void *)self); } } while (0)
+    CRUMB(1, "first field/crowd draw");
+    if (!self) self = *(CInstance **)RB(0x1010c82d8ULL);      // global instance
     if (B.cur_frame != M.frame) {                     // new frame: last frame's strips set the hinges
         if (B.cur_top > -1e8) B.top_fold = B.cur_top;
         if (B.cur_bot < 1e8) B.bot_fold = B.cur_bot;
@@ -431,10 +436,12 @@ long rb_cam3d_spr_draw(RbDrawSprFn orig, CInstance *self, long sprite, int colou
     }
     long r;
     if (field) {
-        if (B.sky_frame != M.frame) { B.sky_frame = M.frame; draw_sky(self); }
+        if (B.sky_frame != M.frame) { B.sky_frame = M.frame; CRUMB(2, "sky"); draw_sky(self); CRUMB(3, "sky done"); }
         B.fy = y; B.fh = FIELD_H * (ys > 0 ? ys : -ys);
         r = orig(self, sprite, colour, sub, x, y, xs, ys, rot, alpha);
+        CRUMB(4, "field drawn");
     } else {
+        CRUMB(5, "crowd strip");
         if (!B.have_ident) { callrv(fn("matrix_build_identity"), self, 0, 0, &B.ident); B.have_ident = 1; }
         if (!B.rs) {                                   // which way matrix_build turns (0,-1,0) up
             RValue m = mbuild(self, 0, 0, 0, STAND_ANGLE, 1, 1, 1), v;
@@ -442,7 +449,7 @@ long rb_cam3d_spr_draw(RbDrawSprFn orig, CInstance *self, long sprite, int colou
             callrv(fn("matrix_transform_vertex"), self, 4, tv, &v);
             double z = v.kind == RV_UNDEFINED ? 0 : array_real(self, v, 2);
             B.rs = z > 0 ? -1 : 1;
-            rb_log("cam3d: bleacher rotation sign %d (z %g)", B.rs, z);
+            rb_log("cam3d: bleacher rotation sign %d (z %g, kind %u)", B.rs, z, v.kind);
             rvfree(&v); rvfree(&m);
         }
         double h = FANS_H * ys, lo = h > 0 ? y : y + h, hi = h > 0 ? y + h : y;
@@ -453,9 +460,13 @@ long rb_cam3d_spr_draw(RbDrawSprFn orig, CInstance *self, long sprite, int colou
         RValue m2 = mbuild(self, 0, F, 0, ang, 1, 1, 1);         // stand up, back into place
         RValue mm[2] = { m1, m2 }, w;
         callrv(fn("matrix_multiply"), self, 2, mm, &w);
+        CRUMB(6, "hinge built");
         mset(self, 0, M.look); mset(self, 2, w);
+        CRUMB(7, "matrices set");
         r = orig(self, sprite, colour, sub, x, y, xs, ys, rot, alpha);
+        CRUMB(8, "strip drawn");
         mset(self, 2, B.ident); mset(self, 0, M.view);
+        CRUMB(9, "restored");
         rvfree(&m1); rvfree(&m2); rvfree(&w);
     }
     g_t_world += mach_absolute_time() - t0;
