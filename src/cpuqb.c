@@ -654,6 +654,7 @@ int rb_cpuqb_target(double *x, double *y) {
 
 // the 4th-down question was closed by someone else (e.g. the player tapped it): drop our answer
 void rb_cpuqb_fourth_closed(void) {
+    if (rb_cpuqb_fourth_msg && g_fourth_wait == 0) return;     // the game clearing old messages as it opens this one
     if (rb_cpuqb_fourth_msg) {
         rb_log("cpuqb: 4th-down question answered by the player, keeping their choice");
         rb_cpuqb_fourth_msg = 0; g_fourth_wait = 0; g_fourth_answered = 1;

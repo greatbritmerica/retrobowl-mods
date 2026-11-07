@@ -43,7 +43,7 @@ static int g_rights, g_calls;
 static struct {
     int live;                                 // CPU play in progress with a call
     double st, prev_st;
-    unsigned t, t_snap, t_throw, t_hand;
+    unsigned t, t_snap, t_throw, t_hand, t_catch;
     double los, fwd, qbx, qby;
     struct { CInstance *inst; double x, y; int rusher, blitz; } d[16]; int nd;
     CInstance *ball;
@@ -82,7 +82,7 @@ void rb_defcall_snap(int is_run, int deep) {
            g_match > 0 ? "RIGHT CALL" : g_match < 0 ? "WRONG CALL" : "neutral", g_rights, g_calls);
     snprintf(g_last, sizeof g_last, "Last: %s - %s %s (%d/%d)", PLAY_NAME[g_play], CALL_NAME[g_call],
              g_match > 0 ? "RIGHT" : g_match < 0 ? "wrong" : "ok", g_rights, g_calls);
-    S.live = 1; S.t_snap = S.t; S.t_throw = S.t_hand = 0; S.nd = 0;
+    S.live = 1; S.t_snap = S.t; S.t_throw = S.t_hand = S.t_catch = 0; S.nd = 0;
 }
 
 int rb_defcall_blitz(void) { return S.live && g_call == CALL_BLITZ; }
@@ -124,6 +124,7 @@ void rb_defcall_step(CInstance *ball, CInstance *other, int cpu_offense) {
     }
     if (S.st == 3 && S.prev_st != 3) S.t_throw = S.t;
     if ((S.st == 19 || S.st == 5) && !S.t_hand && !S.t_throw) S.t_hand = S.t;
+    if (S.st == 5 && S.prev_st == 3) S.t_catch = S.t;
     if (S.st == 4 || S.st == 6 || S.st == 7 || S.st == 9 || S.st == 11) S.live = 0;   // play over
 }
 
@@ -180,8 +181,17 @@ void rb_defcall_after_ai(CInstance *player) {
         return;
     }
     if (st == 19 || st == 5) {                                  // run (or a catch, but then live is 0 soon)
-        if (S.t_throw) return;
         double bx = rb_get_builtin_real(S.ball, SLOT_X), by = rb_get_builtin_real(S.ball, SLOT_Y);
+        if (S.t_throw) {                                        // after the catch
+            unsigned sc = S.t - S.t_catch;
+            if (!S.t_catch || g_match >= 0) return;
+            // wrong call (a blitz that got read, a zone the throw sat behind...): nobody home -
+            // defenders take bad angles for a moment and he turns it upfield
+            int ahead = (x - bx) * S.fwd > 0;
+            unsigned window = g_call == CALL_BLITZ ? 45 : 28;
+            if (sc < window && ahead && hypot(bx - x, by - y) < 220) steer(player, x, y, bx - S.fwd * 45, by, 1.0);
+            return;
+        }
         unsigned since = S.t - S.t_hand;
         if (g_match > 0) {
             if (hypot(bx - x, by - y) < 230) steer(player, x, y, bx + S.fwd * 12, by, 1.0);   // swarm, meet him early
