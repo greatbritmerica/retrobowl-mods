@@ -245,29 +245,31 @@ static void finger(int down, double gx, double gy) {
 
 // The game asks "Play 4th down or go for field goal?" (or punt) before the CPU's 4th-down play.
 // Hold the human off the buttons for a moment, then answer it like a coach would.
-// 4th down, roughly modern-NFL aggressive: short yardage and good field position favour going for it.
+// 4th down: the CPU always weighs all three - go for it, field goal, punt - whatever the game's question
+// offered. Roughly modern-NFL: short yardage + good field position = go; in range = kick it; else punt.
 // scrimmage = yards from midfield from the offense's side (-30 = own 20, +20 = opponent's 30)
-static int fourth_go(int fg_offered, const char *how) {
+static int fourth_choice(int fg_offered, const char *how) {
     double yards = rb_get_obj_real(OBJ_CONTROLLER, SLOT_YARDS);
     double scr = rb_get_obj_real(OBJ_CONTROLLER, SLOT_SCRIMMAGE);
     if (!(scr > -60 && scr < 60)) scr = 0;
-    double to_goal = 50 - scr, p;
-    if (fg_offered)          p = yards <= 1 ? 0.55 : yards <= 2 ? 0.30 : yards <= 3 && to_goal <= 5 ? 0.35 : 0.0;
-    else if (to_goal <= 40)  p = yards <= 2 ? 0.75 : yards <= 4 ? 0.50 : yards <= 6 ? 0.20 : 0.05;   // no man's land
+    double to_goal = 50 - scr, fg_dist = to_goal + 17, p;
+    int in_range = fg_dist <= 54;
+    if (in_range)            p = yards <= 1 ? 0.55 : yards <= 2 ? 0.30 : yards <= 3 && to_goal <= 5 ? 0.35 : 0.03;
+    else if (to_goal <= 45)  p = yards <= 2 ? 0.75 : yards <= 4 ? 0.50 : yards <= 6 ? 0.20 : 0.05;   // no man's land
     else if (to_goal <= 60)  p = yards <= 1 ? 0.65 : yards <= 2 ? 0.40 : yards <= 4 ? 0.15 : 0.0;    // midfield
     else if (to_goal <= 75)  p = yards <= 1 ? 0.40 : yards <= 2 ? 0.15 : 0.0;                         // own 25-40
     else                     p = yards <= 1 ? 0.15 : 0.0;                                             // backed up
-    int go = yards > 0 && frand() < p;
-    rb_log("cpuqb: 4th down (%s, %s offered): 4th and %.1f, %.0f yds to goal, go chance %.0f%% -> %s",
-           how, fg_offered ? "field goal" : "punt", yards, to_goal, p * 100,
-           go ? "GO FOR IT" : fg_offered ? "FIELD GOAL" : "PUNT");
-    return go;
+    int act;
+    if (yards > 0 && frand() < p) act = ACT_PLAY_4TH;
+    else if (fg_dist <= 47 || (in_range && frand() < 0.6)) act = ACT_FIELD_GOAL;
+    else act = ACT_PUNT;
+    rb_log("cpuqb: 4th down (%s, game offered %s): 4th and %.1f, %.0f yds to goal (%.0f-yd kick), go %.0f%% -> %s",
+           how, fg_offered ? "field goal" : "punt", yards, to_goal, fg_dist, p * 100,
+           act == ACT_PLAY_4TH ? "GO FOR IT" : act == ACT_FIELD_GOAL ? "FIELD GOAL" : "PUNT");
+    return act;
 }
 
-static int fourth_decide(int fg_offered) {
-    if (fourth_go(fg_offered, "question")) return ACT_PLAY_4TH;
-    return fg_offered ? ACT_FIELD_GOAL : ACT_PUNT;
-}
+static int fourth_decide(int fg_offered) { return fourth_choice(fg_offered, "question"); }
 
 void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
     rb_vf_frame();

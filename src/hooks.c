@@ -87,6 +87,7 @@ int rb_gate_attack(CInstance *self, int human_has_ball) {
 
 // =============================================================== diagnostics
 // game's own debug log (slog) -> rbmod.log
+static void fourth_check(const char *txt, const char *via);
 RValue *hook_slog(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
     rb_input_install();
     char line[400]; int n = 0;
@@ -96,6 +97,7 @@ RValue *hook_slog(CInstance *self, CInstance *other, RValue *res, int argc, RVal
     }
     line[n < (int)sizeof line ? n : (int)sizeof line - 1] = 0;
     rb_log("slog: %s", line);
+    if (!strncmp(line, "s_create_message[", 17)) fourth_check(line, "slog");
     return ORIG(slog)(self, other, res, argc, argv);
 }
 
@@ -158,24 +160,34 @@ RValue *hook_update_ball(CInstance *self, CInstance *other, RValue *res, int arg
 }
 
 // 4th-down question on a CPU drive: let the CPU answer it
-RValue *hook_create_message(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
-    char b[64], txt[160];                                                  // read the text BEFORE the script runs
-    const char *t0 = argc > 0 && argv && argv[0] ? rb_rv_str(argv[0], b, sizeof b) : "";
-    snprintf(txt, sizeof txt, "%s", t0 ? t0 : "");
-    RValue *r = ORIG(create_message)(self, other, res, argc, argv);
-    static int dbg;
-    int is4 = strstr(txt, "4th") || strstr(txt, "ourth") || (strstr(txt, "unt?") && strstr(txt, "own")) ||
-              (strstr(txt, "oal?") && strstr(txt, "own"));
-    if (is4 || dbg < 6) { dbg++; rb_log("create_message: argc %d text \"%.60s\"%s", argc, txt, is4 ? " (4th-down question)" : ""); }
-    if (!is4) return r;
-    if (!rb_obj_exists(OBJ_CONTROLLER)) { rb_log("  ...but no controller"); return r; }
+// The CPU's 4th-down question ("Play 4th down or punt?" / "...or go for field goal?"): let the CPU answer.
+// Seen through slog (the script logs its text first thing) and through the script's own arguments.
+static void fourth_check(const char *txt, const char *via) {
+    int is4 = strstr(txt, "4th") || strstr(txt, "ourth");
+    if (!is4 || !(strstr(txt, "unt") || strstr(txt, "oal"))) return;
+    if (rb_cpuqb_fourth_msg) return;                                       // already caught this one
+    if (!rb_obj_exists(OBJ_CONTROLLER)) return;
     double human = rb_get_obj_real(OBJ_MASTER, SLOT_PLAYERTEAMINDEX);
     double poss = rb_get_obj_real(OBJ_CONTROLLER, SLOT_POSSESSION);
-    rb_log("  human team %g, possession %g", human, poss);
+    rb_log("4th-down question (via %s): human team %g, possession %g", via, human, poss);
     if (human >= 0 && poss >= 0 && poss != human) {                       // (down may still read 3 here)
-        rb_cpuqb_fourth_msg = (strstr(txt, "oal") || strstr(txt, "OAL")) ? 1 : 2;
-        rb_log("message on CPU 4th down: \"%s\"", txt);
+        rb_cpuqb_fourth_msg = strstr(txt, "oal") ? 1 : 2;
+        rb_log("message on CPU 4th down: \"%.60s\"", txt);
     }
+}
+
+RValue *hook_create_message(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
+    char b[64], txt[200];                                                  // read the text BEFORE the script runs
+    txt[0] = 0;
+    for (int i = 0; i < argc && i < 10 && argv; i++) {
+        if (!argv[i] || (argv[i]->kind & 0xffffff) != RV_STRING) continue;
+        const char *t = rb_rv_str(argv[i], b, sizeof b);
+        if (!t || !t[0]) continue;
+        int L = (int)strlen(txt);
+        snprintf(txt + L, sizeof txt - L, "%s%s", L ? " | " : "", t);
+    }
+    RValue *r = ORIG(create_message)(self, other, res, argc, argv);
+    fourth_check(txt, "args");
     return r;
 }
 
