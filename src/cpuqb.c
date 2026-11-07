@@ -357,9 +357,9 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         // brain's run/pass yards as strictly. Then the formation shows it (80% honest):
         //   back right behind the QB = run, back beside the QB = pass,
         //   receivers split extra wide = deep shot, pulled in tight = short.
-        p_run = 0.40 + (p_run - 0.38) * 0.5;
+        p_run = 0.42 + (rb_brain_run_rate() - 0.38) * 0.5;
         if (Q.yards > 0 && Q.yards <= 2) p_run += 0.25;
-        else if (Q.yards >= 8) p_run -= 0.10;
+        else if (Q.down >= 2 && Q.yards >= 8) p_run -= 0.12;
         if (Q.down >= 3 && Q.yards >= 4) p_run = 0.12;
         double p_deep = Q.down >= 3 && Q.yards >= 10 ? 0.35 : 0.18;
         Q.is_run = frand() < p_run;
@@ -484,7 +484,11 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         double lane = nearest_def(Q.qbx + Q.fwd * 80, Q.qby, 10);
         int can_scramble = !Q.scrambled && lane > 45;
         int go = 0, away = 0, run = 0;
-        if (held >= Q.read_frames && r >= 0 && open > SAFE_OPEN) go = 1;          // open man
+        if (rb_defcall_blitz() && !Q.deep && held >= 14 && r >= 0 && open > SAFE_OPEN - 12) {
+            go = 1;                                                             // blitz: hit the hot route
+            rb_log("cpuqb: blitz read - hot route");
+        }
+        else if (held >= Q.read_frames && r >= 0 && open > SAFE_OPEN) go = 1;     // open man
         else if (!Q.scrambled && held > 15 && pressure < 80 && open < SAFE_OPEN && lane > 50 && frand() < 0.15)
             run = 1;                                                            // pocket breaking down: take off
         else if (pressure < 40 && held > 8) {                                   // about to be hit

@@ -85,6 +85,8 @@ void rb_defcall_snap(int is_run, int deep) {
     S.live = 1; S.t_snap = S.t; S.t_throw = S.t_hand = 0; S.nd = 0;
 }
 
+int rb_defcall_blitz(void) { return S.live && g_call == CALL_BLITZ; }
+
 void rb_defcall_reset(void) { if (!g_open) { g_asked = 0; g_answer = 0; } S.live = 0; }
 
 typedef struct { int n; } RoleCtx;
@@ -148,7 +150,12 @@ void rb_defcall_after_ai(CInstance *player) {
 
     if (st == 1 || st == 2) {                                   // QB dropping / reading
         if (!rusher) return;
-        if (g_call == CALL_BLITZ || g_match > 0) steer(player, x, y, S.qbx, S.qby, 1.0);     // get home
+        unsigned since = S.t - S.t_snap;
+        if (g_call == CALL_BLITZ && g_match < 0) {              // they saw it coming: blitz gets picked up
+            if (since < 18) { double cx = S.qbx + S.fwd * 50, cy = y; steer(player, x, y, cx, cy, 0.6); }
+            else steer(player, x, y, S.qbx, S.qby, 0.7);
+        }
+        else if (g_call == CALL_BLITZ || g_match > 0) steer(player, x, y, S.qbx, S.qby, 1.0);     // get home
         else {                                                  // contain: push the pocket, don't finish
             double cx = S.qbx + S.fwd * 45, cy = S.qby + (y > S.qby ? 25 : -25);
             if (hypot(cx - x, cy - y) > 6) steer(player, x, y, cx, cy, 0.7);
