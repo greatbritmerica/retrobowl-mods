@@ -72,6 +72,7 @@ enum { OBJ_BTN_FIELDGOAL = 16, OBJ_BALL = 3, OBJ_CONTROLLER = 44, OBJ_MASTER = 8
 #define VA_GET_INST_VAR   0x100bba9f0ULL  // (RValue* inst, slot, INT_MIN, RValue* out, 0, 0)
 #define VA_SET_REF_VAR    0x100bbab88ULL  // (RValue* target, slot, INT_MIN, RValue* value)
 #define VA_GET_BUILTIN    0x100bb9fc0ULL  // (CInstance* self, slot, INT_MIN, RValue* out)
+#define VA_SET_BUILTIN    0x100bba1bcULL  // (CInstance* self, slot, INT_MIN, RValue* value)
 #define VA_CALL_BUILTIN   0x100bce4c8ULL  // (self, other, RValue* res, argc, fn_id, RValue** argv)
 #define VA_RV_FREE        0x100004ea0ULL
 #define VA_RV_COPY        0x10000684cULL  // (dst, src)
@@ -95,7 +96,8 @@ RValue rb_obj_ref(int object_index);
 int    rb_obj_exists(int object_index);                       // RValue that refers to an object (kind 15)
 double rb_get_obj_real(int object_index, uint64_t slot_va); // object_index.var  (first instance)
 double rb_get_inst_real(CInstance *inst, uint64_t slot_va); // inst.var
-double rb_get_builtin_real(CInstance *inst, uint64_t slot_va); // inst.x, inst.direction ...
+double rb_get_builtin_real(CInstance *inst, uint64_t slot_va);
+void   rb_set_builtin_real(CInstance *inst, uint64_t slot_va, double v); // inst.x, inst.direction ...
 void   rb_set_obj_real(int object_index, uint64_t slot_va, double v);
 void   rb_set_inst_real(CInstance *inst, uint64_t slot_va, double v);
 double rb_rv_real(RValue *v);

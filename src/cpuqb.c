@@ -351,23 +351,47 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         if (Q.yards > 0 && Q.yards <= 2) p_run += 0.25;
         else if (Q.yards >= 8) p_run -= 0.16;
         if (Q.down >= 3 && Q.yards >= 4) p_run = 0.10;
-        // the formation is the tell: back right behind the QB = run-heavy, offset or gone = pass,
-        // receivers split wide = deep shots
-        int rbi = find_rb();
-        double rb_dy = rbi >= 0 ? fabs(Q.of[rbi].y - Q.qby) : 999, spread = 0;
-        for (int i = 0; i < Q.nof; i++)
-            if (Q.of[i].seen && Q.of[i].inst != Q.qb && i != rbi && fabs(Q.of[i].y - Q.qby) > spread) spread = fabs(Q.of[i].y - Q.qby);
-        if (rbi < 0)          p_run *= 0.15;
-        else if (rb_dy < 22)  p_run = p_run * 1.4 + 0.15;
-        else if (rb_dy > 45)  p_run *= 0.45;
-        if (p_run > 0.85) p_run = 0.85;
-        double p_deep = spread > 175 ? 0.40 : spread > 135 ? 0.18 : 0.06;
-        if (Q.down >= 3 && Q.yards >= 10) p_deep += 0.15;
+        // Play mix for the called defense: the player needs runs to read, so it doesn't follow the
+        // brain's run/pass yards as strictly. Then the formation shows it (80% honest):
+        //   back right behind the QB = run, back beside the QB = pass,
+        //   receivers split extra wide = deep shot, pulled in tight = short.
+        p_run = 0.40 + (p_run - 0.38) * 0.5;
+        if (Q.yards > 0 && Q.yards <= 2) p_run += 0.25;
+        else if (Q.yards >= 8) p_run -= 0.10;
+        if (Q.down >= 3 && Q.yards >= 4) p_run = 0.12;
+        double p_deep = Q.down >= 3 && Q.yards >= 10 ? 0.35 : 0.18;
         Q.is_run = frand() < p_run;
         Q.deep = !Q.is_run && frand() < p_deep;
-        rb_log("cpuqb: formation: back %s (%.0f off the QB), widest receiver %.0f -> run %.0f%%, deep %.0f%%",
-               rbi < 0 ? "none" : rb_dy < 22 ? "behind QB" : rb_dy > 45 ? "offset" : "slightly offset", rb_dy, spread,
-               p_run * 100, p_deep * 100);
+        int show_run = Q.is_run ^ (frand() < 0.20);
+        int show_deep = !show_run && (Q.deep ^ (frand() < 0.15));
+        int rbi = find_rb();
+        if (rbi >= 0) {
+            double side = frand() < 0.5 ? -1 : 1;
+            double nx = show_run ? Q.qbx - Q.fwd * 50 : Q.qbx - Q.fwd * 26;
+            double ny = show_run ? Q.qby : Q.qby + side * 44;
+            rb_set_builtin_real(Q.of[rbi].inst, SLOT_X, nx); rb_set_builtin_real(Q.of[rbi].inst, SLOT_Y, ny);
+            Q.of[rbi].x = nx; Q.of[rbi].y = ny;
+        }
+        if (!show_run) {                                       // outside receivers: wide or tight
+            int top = -1, bot = -1;
+            for (int i = 0; i < Q.nof; i++) {
+                if (!Q.of[i].seen || Q.of[i].inst == Q.qb || i == rbi) continue;
+                if (top < 0 || Q.of[i].y < Q.of[top].y) top = i;
+                if (bot < 0 || Q.of[i].y > Q.of[bot].y) bot = i;
+            }
+            double push = show_deep ? 40 : -22;
+            if (top >= 0 && Q.of[top].y < Q.qby - 60) {
+                double ny = Q.of[top].y - push; if (ny < 145) ny = 145;
+                rb_set_builtin_real(Q.of[top].inst, SLOT_Y, ny); Q.of[top].y = ny;
+            }
+            if (bot >= 0 && bot != top && Q.of[bot].y > Q.qby + 60) {
+                double ny = Q.of[bot].y + push; if (ny > 455) ny = 455;
+                rb_set_builtin_real(Q.of[bot].inst, SLOT_Y, ny); Q.of[bot].y = ny;
+            }
+        }
+        rb_log("cpuqb: formation shows %s (back %s) for a %s play (run %.0f%%, deep %.0f%%)",
+               show_run ? "RUN" : show_deep ? "DEEP" : "SHORT", show_run ? "behind QB" : "beside QB",
+               Q.is_run ? "RUN" : Q.deep ? "DEEP" : "SHORT", p_run * 100, p_deep * 100);
         rb_defcall_reset();
         Q.called = 0;
         rb_log("cpuqb: new play, down %g yards %g (x_yards %g), los %.0f fwd %+.0f, arm %.4f -> k %.4f, %s%s",
@@ -405,6 +429,7 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         if (!Q.called) {                                       // the player calls the defense first
             if (!rb_defcall_ready((int)Q.down, Q.yards, Q.t)) break;
             if (Q.is_run && find_rb() < 0) { rb_log("cpuqb: no RB found, passing"); Q.is_run = 0; }
+            { int r = find_rb(); if (r >= 0) rb_log("cpuqb: at the snap the back is %.0f off the QB", fabs(Q.of[r].y - Q.qby)); }
             rb_defcall_snap(Q.is_run, Q.deep);
             Q.called = 1;
         }

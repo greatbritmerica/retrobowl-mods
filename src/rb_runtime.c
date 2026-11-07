@@ -110,6 +110,14 @@ double rb_get_builtin_real(CInstance *inst, uint64_t slot_va) {
     return out.kind == RV_UNDEFINED ? -9999.0 : rb_rv_real(&out);
 }
 
+void rb_set_builtin_real(CInstance *inst, uint64_t slot_va, double val) {
+    if (!inst) return;
+    RValue v = {0};
+    v.real = val; v.kind = RV_REAL;
+    typedef void (*fn_set_builtin)(CInstance *, int, int, RValue *);
+    ((fn_set_builtin)RB(VA_SET_BUILTIN))(inst, rb_slot(slot_va), (int)0x80000000, &v);
+}
+
 void rb_set_obj_real(int object_index, uint64_t slot_va, double val) {
     if (!rb_obj_exists(object_index)) return;
     RValue ref = rb_obj_ref(object_index);

@@ -63,7 +63,8 @@ int rb_defcall_ready(int down, double yards, unsigned look_frames) {
         static char title[64], msg[200];
         const char *dn = down <= 1 ? "1st" : down == 2 ? "2nd" : down == 3 ? "3rd" : "4th";
         snprintf(title, sizeof title, "%s & %.0f  -  your call", dn, yards < 1 ? 1 : yards);
-        snprintf(msg, sizeof msg, "%s", g_last[0] ? g_last : "Read their formation, then call it.");
+        snprintf(msg, sizeof msg, "%s%sBack behind QB = run, beside = pass. Receivers split wide = deep.",
+                 g_last, g_last[0] ? "\n" : "");
         static const char *b[4] = { "Blitz", "Man", "Short zone", "Deep zone" };
         rb_ui_side_menu(title, msg, b, 4, on_call);
     }
@@ -79,9 +80,8 @@ void rb_defcall_snap(int is_run, int deep) {
     g_calls++; if (g_match > 0) g_rights++;
     rb_log("defcall: %s vs %s -> %s (%d/%d right reads)", CALL_NAME[g_call], PLAY_NAME[g_play],
            g_match > 0 ? "RIGHT CALL" : g_match < 0 ? "WRONG CALL" : "neutral", g_rights, g_calls);
-    snprintf(g_last, sizeof g_last, "Last play they ran a %s - your %s was %s.  (%d of %d reads right)",
-             PLAY_NAME[g_play], CALL_NAME[g_call],
-             g_match > 0 ? "the RIGHT call" : g_match < 0 ? "the wrong call" : "an OK call", g_rights, g_calls);
+    snprintf(g_last, sizeof g_last, "Last: %s - %s %s (%d/%d)", PLAY_NAME[g_play], CALL_NAME[g_call],
+             g_match > 0 ? "RIGHT" : g_match < 0 ? "wrong" : "ok", g_rights, g_calls);
     S.live = 1; S.t_snap = S.t; S.t_throw = S.t_hand = 0; S.nd = 0;
 }
 
