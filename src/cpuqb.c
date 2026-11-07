@@ -248,12 +248,14 @@ static void finger(int down, double gx, double gy) {
 // 4th down: the CPU always weighs all three - go for it, field goal, punt - whatever the game's question
 // offered. Roughly modern-NFL: short yardage + good field position = go; in range = kick it; else punt.
 // scrimmage = yards from midfield from the offense's side (-30 = own 20, +20 = opponent's 30)
+double rb_cpuqb_fg_dist;        // length of the field goal the CPU chose
 static int fourth_choice(int fg_offered, const char *how) {
     double yards = rb_get_obj_real(OBJ_CONTROLLER, SLOT_YARDS);
     double scr = rb_get_obj_real(OBJ_CONTROLLER, SLOT_SCRIMMAGE);
     if (!(scr > -60 && scr < 60)) scr = 0;
     double to_goal = 50 - scr, fg_dist = to_goal + 17, p;
     int in_range = fg_dist <= 54;
+    rb_cpuqb_fg_dist = fg_dist;
     if (in_range)            p = yards <= 1 ? 0.55 : yards <= 2 ? 0.30 : yards <= 3 && to_goal <= 5 ? 0.35 : 0.03;
     else if (to_goal <= 45)  p = yards <= 2 ? 0.75 : yards <= 4 ? 0.50 : yards <= 6 ? 0.20 : 0.05;   // no man's land
     else if (to_goal <= 60)  p = yards <= 1 ? 0.65 : yards <= 2 ? 0.40 : yards <= 4 ? 0.15 : 0.0;    // midfield
@@ -278,8 +280,7 @@ void rb_cpuqb_fourth_tick(void) {
     rb_vf.active = 1; rb_vf.down = 0;                          // the human can't press the CPU's buttons
     if (++g_fourth_wait < 3) return;
     rb_cpuqb_action = fourth_decide(rb_cpuqb_fourth_msg == 1);
-    rb_cpuqb_fourth_msg = 0; g_fourth_wait = 0; g_fourth_answered = 1;
-    if (rb_cpuqb_action == ACT_FIELD_GOAL) g_fg_pending = 1;
+    rb_cpuqb_fourth_msg = 0; g_fourth_wait = 0; g_fourth_answered = 1;   // (field goals are settled in hooks.c)
 }
 
 void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {

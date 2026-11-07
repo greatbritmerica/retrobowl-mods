@@ -124,7 +124,21 @@ static void cpu_fourth_action(CInstance *self, CInstance *other) {
     rb_vf.active = 0; rb_vf.down = 0;          // whatever happens next, the screen is the human's again
     g_cpu_clearing = 1;
     if (act == ACT_PUNT) { rb_log("cpuqb: punting"); ((GMLScript)RB(0x100094060ULL))(self, other, &pr, 0, 0); }
-    else if (act == ACT_FIELD_GOAL) { rb_log("cpuqb: kicking field goal"); ((GMLScript)RB(0x100087064ULL))(self, other, &pr, 0, 0); }
+    else if (act == ACT_FIELD_GOAL) {
+        // The kick itself needs the kicking mini-game's input, which our virtual finger can't drive (the ball
+        // isn't updating then). So the CPU's kick is decided like a sim: by distance, the way the game
+        // scores it - then reported through the same result the game uses after a real kick.
+        double d = rb_cpuqb_fg_dist;
+        double p = d <= 30 ? 0.97 : d <= 40 ? 0.97 - (d - 30) * 0.010 : d <= 50 ? 0.87 - (d - 40) * 0.020 : 0.67 - (d - 50) * 0.035;
+        if (p < 0.15) p = 0.15;
+        int good = arc4random_uniform(10000) / 10000.0 < p;
+        rb_log("cpuqb: kicking a %.0f-yd field goal (%.0f%% chance) -> %s", d, p * 100, good ? "GOOD" : "NO GOOD");
+        RValue code = {0}; code.kind = RV_REAL; code.real = good ? 6 : 7;     // ACTION_RESULT_FIELDGOAL_GOOD / _BAD
+        RValue *av[1] = { &code };
+        ((GMLScript)RB(0x1000f7200ULL))(self, other, &pr, 1, av);            // s_action_result
+        RValue pr2 = {0}; pr2.kind = RV_UNDEFINED;
+        ((GMLScript)RB(0x100475d8cULL))(self, other, &pr2, 0, 0);            // s_msg_clear (as the buttons do)
+    }
     else if (act == ACT_PLAY_4TH) { rb_log("cpuqb: going for it"); ((GMLScript)RB(0x10008b700ULL))(self, other, &pr, 0, 0); }
     g_cpu_clearing = 0;
 }
