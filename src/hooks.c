@@ -155,15 +155,19 @@ RValue *hook_update_ball(CInstance *self, CInstance *other, RValue *res, int arg
 
 // 4th-down question on a CPU drive: let the CPU answer it
 RValue *hook_create_message(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
+    char b[64], txt[160];                                                  // read the text BEFORE the script runs
+    const char *t0 = argc > 0 && argv && argv[0] ? rb_rv_str(argv[0], b, sizeof b) : "";
+    snprintf(txt, sizeof txt, "%s", t0 ? t0 : "");
     RValue *r = ORIG(create_message)(self, other, res, argc, argv);
-    char b[64];
-    const char *txt = argc > 0 ? rb_rv_str(argv[0], b, sizeof b) : "";
     static int dbg;
-    if (dbg < 12) { dbg++; rb_log("create_message: argc %d kind %u text \"%.40s\"", argc, argc > 0 && argv[0] ? argv[0]->kind : 999, txt); }
-    if (!(strstr(txt, "4th") || strstr(txt, "ourth"))) return r;          // only the 4th-down question
-    if (!rb_obj_exists(OBJ_CONTROLLER)) return r;                          // not in a match
+    int is4 = strstr(txt, "4th") || strstr(txt, "ourth") || (strstr(txt, "unt?") && strstr(txt, "own")) ||
+              (strstr(txt, "oal?") && strstr(txt, "own"));
+    if (is4 || dbg < 6) { dbg++; rb_log("create_message: argc %d text \"%.60s\"%s", argc, txt, is4 ? " (4th-down question)" : ""); }
+    if (!is4) return r;
+    if (!rb_obj_exists(OBJ_CONTROLLER)) { rb_log("  ...but no controller"); return r; }
     double human = rb_get_obj_real(OBJ_MASTER, SLOT_PLAYERTEAMINDEX);
     double poss = rb_get_obj_real(OBJ_CONTROLLER, SLOT_POSSESSION);
+    rb_log("  human team %g, possession %g", human, poss);
     if (human >= 0 && poss >= 0 && poss != human) {                       // (down may still read 3 here)
         rb_cpuqb_fourth_msg = (strstr(txt, "oal") || strstr(txt, "OAL")) ? 1 : 2;
         rb_log("message on CPU 4th down: \"%s\"", txt);
