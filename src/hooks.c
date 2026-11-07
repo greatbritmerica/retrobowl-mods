@@ -4,6 +4,7 @@
 #include "sys.h"
 #include "input.h"
 #include "cpuqb.h"
+#include "defcall.h"
 #include "defense.h"
 #include "dbrain.h"
 #include "camera3d.h"
@@ -117,6 +118,7 @@ RValue *hook_update_ball(CInstance *self, CInstance *other, RValue *res, int arg
     double poss = rb_get_obj_real(OBJ_CONTROLLER, SLOT_POSSESSION);
     int cpu_offense = human >= 0 && poss >= 0 && poss != human;
     rb_cpuqb_step(self, other, cpu_offense);
+    rb_defcall_step(self, other, cpu_offense);
     double los, fwd, qbx, qby;
     rb_cpuqb_info(&los, &fwd, &qbx, &qby);
     rb_def_step(self, other, cpu_offense, los, fwd, qbx, qby);
@@ -201,7 +203,8 @@ long hook_spr_draw(CInstance *self, long sprite, long colour, float sub, float x
 // =============================================================== player control on defense
 RValue *hook_get_destination(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
     RValue *r = ORIG(get_destination)(self, other, res, argc, argv);
-    rb_def_after_ai(self);
+    rb_defcall_after_ai(self);           // the call shapes the AI defenders...
+    rb_def_after_ai(self);               // ...the player's own man stays his
     rb_dlearn_after_ai(self);
     return r;
 }

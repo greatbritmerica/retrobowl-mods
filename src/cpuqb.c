@@ -11,6 +11,7 @@
 #include "input.h"
 #include "cpuqb.h"
 #include "brain.h"
+#include "defcall.h"
 #include "defense.h"
 
 #define THROW_K      0.1159     // fallback ball speed per pixel of drag (a strong arm)
@@ -44,6 +45,7 @@ static struct {
     unsigned sw_t, sw_cool; double sw_dir, sw_x, sw_y;   // juke swipe in progress
     double prev_st, th_open, th_hdist; int thrown, caught, ran, scored;   // results, for learning
     struct { CInstance *inst; double x, y; } d0[16]; int nd0; unsigned t_rel;   // defenders at release
+    int called;                                                         // defensive call made for this play
 } Q;
 
 static int g_fg_pending;       // CPU chose a field goal; survives the kick set-up
@@ -349,8 +351,25 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         if (Q.yards > 0 && Q.yards <= 2) p_run += 0.25;
         else if (Q.yards >= 8) p_run -= 0.16;
         if (Q.down >= 3 && Q.yards >= 4) p_run = 0.10;
+        // the formation is the tell: back right behind the QB = run-heavy, offset or gone = pass,
+        // receivers split wide = deep shots
+        int rbi = find_rb();
+        double rb_dy = rbi >= 0 ? fabs(Q.of[rbi].y - Q.qby) : 999, spread = 0;
+        for (int i = 0; i < Q.nof; i++)
+            if (Q.of[i].seen && Q.of[i].inst != Q.qb && i != rbi && fabs(Q.of[i].y - Q.qby) > spread) spread = fabs(Q.of[i].y - Q.qby);
+        if (rbi < 0)          p_run *= 0.15;
+        else if (rb_dy < 22)  p_run = p_run * 1.4 + 0.15;
+        else if (rb_dy > 45)  p_run *= 0.45;
+        if (p_run > 0.85) p_run = 0.85;
+        double p_deep = spread > 175 ? 0.40 : spread > 135 ? 0.18 : 0.06;
+        if (Q.down >= 3 && Q.yards >= 10) p_deep += 0.15;
         Q.is_run = frand() < p_run;
-        Q.deep = !Q.is_run && frand() < 0.18;
+        Q.deep = !Q.is_run && frand() < p_deep;
+        rb_log("cpuqb: formation: back %s (%.0f off the QB), widest receiver %.0f -> run %.0f%%, deep %.0f%%",
+               rbi < 0 ? "none" : rb_dy < 22 ? "behind QB" : rb_dy > 45 ? "offset" : "slightly offset", rb_dy, spread,
+               p_run * 100, p_deep * 100);
+        rb_defcall_reset();
+        Q.called = 0;
         rb_log("cpuqb: new play, down %g yards %g (x_yards %g), los %.0f fwd %+.0f, arm %.4f -> k %.4f, %s%s",
                Q.down, Q.yards, rb_get_obj_real(OBJ_CONTROLLER, SLOT_X_YARDS), Q.los_x, Q.fwd, Q.mtp, Q.k,
                Q.is_run ? "RUN" : "PASS", Q.deep ? " (deep shot)" : "");
@@ -382,6 +401,12 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
                     break;
                 }
             } else rb_log("cpuqb: 4th down but no kick button");
+        }
+        if (!Q.called) {                                       // the player calls the defense first
+            if (!rb_defcall_ready((int)Q.down, Q.yards, Q.t)) break;
+            if (Q.is_run && find_rb() < 0) { rb_log("cpuqb: no RB found, passing"); Q.is_run = 0; }
+            rb_defcall_snap(Q.is_run, Q.deep);
+            Q.called = 1;
         }
         if (Q.is_run) {
             int rb = find_rb();

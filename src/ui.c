@@ -62,3 +62,29 @@ void rb_ui_choice(const char *title, const char *message, const char *b1, const 
         MSG(void, id, _Bool, id)(vc, S("presentViewController:animated:completion:"), alert, 1, 0);
     });
 }
+
+// Up to 6 buttons as an action sheet (keeps the middle of the field visible). cb(i) is 1-based.
+void rb_ui_choice_n(const char *title, const char *message, const char **buttons, int n, void (*cb)(int)) {
+    if (n > 6) n = 6;
+    const char *b0 = n > 0 ? buttons[0] : 0, *b1 = n > 1 ? buttons[1] : 0, *b2 = n > 2 ? buttons[2] : 0,
+               *b3 = n > 3 ? buttons[3] : 0, *b4 = n > 4 ? buttons[4] : 0, *b5 = n > 5 ? buttons[5] : 0;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        id vc = top_view_controller();
+        if (!vc) { rb_log("ui: no view controller"); cb(0); return; }
+        id alert = MSG(id, id, id, long)(C("UIAlertController"),
+                       S("alertControllerWithTitle:message:preferredStyle:"), nsstr(title), nsstr(message), 0);
+        for (int i = 0; i < n; i++) {
+            int idx = i + 1;
+            const char *bt = i == 0 ? b0 : i == 1 ? b1 : i == 2 ? b2 : i == 3 ? b3 : i == 4 ? b4 : b5;
+            id a = MSG(id, id, long, void (^)(id))(C("UIAlertAction"), S("actionWithTitle:style:handler:"),
+                       nsstr(bt), 0, ^(id act) { cb(idx); });
+            MSG(void, id)(alert, S("addAction:"), a);
+        }
+        id pop = MSG(id)(alert, S("popoverPresentationController"));   // iPad needs an anchor
+        if (pop) {
+            id view = MSG(id)(vc, S("view"));
+            MSG(void, id)(pop, S("setSourceView:"), view);
+        }
+        MSG(void, id, _Bool, id)(vc, S("presentViewController:animated:completion:"), alert, 1, 0);
+    });
+}

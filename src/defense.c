@@ -182,3 +182,5 @@ int rb_def_human(double *x, double *y) {
     return *x > -9000;
 }
 int rb_def_jumped(void) { return D.jumped; }
+
+CInstance *rb_def_controlled(void) { return D.active ? D.ctrl : 0; }
