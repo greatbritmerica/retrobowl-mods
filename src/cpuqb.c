@@ -198,6 +198,7 @@ static int pick_receiver(double *score_out, double *open_out) {
             double hd = hypot(hx - lx, hy - ly) - DEF_CLOSE * T * 1.5 - rb_brain.hdef_margin;
             if (hd < open) open = hd;
         }
+        open += rb_brain.bias;                                // learned: how much roomier throws really are
         if (r->turn > 6) open -= 15;                          // mid-cut: the lead won't hold
         double gain = (lx - Q.los_x) * Q.fwd;
         double score = open * 0.8 + gain * (Q.deep ? 0.45 : 0.25) - (open < SAFE_OPEN ? 80 : 0) + frand() * 10;
@@ -242,13 +243,27 @@ static void finger(int down, double gx, double gy) {
 
 // The game asks "Play 4th down or go for field goal?" (or punt) before the CPU's 4th-down play.
 // Hold the human off the buttons for a moment, then answer it like a coach would.
-static int fourth_decide(int fg_offered) {
-    double down = rb_get_obj_real(OBJ_CONTROLLER, SLOT_DOWN), yards = rb_get_obj_real(OBJ_CONTROLLER, SLOT_YARDS);
-    int go = yards > 0 && yards <= 1.2 && frand() < (fg_offered ? 0.35 : 0.25);
-    rb_log("cpuqb: 4th-down question (%s offered), 4th and %g -> %s", fg_offered ? "field goal" : "punt", yards,
+// 4th down, roughly modern-NFL aggressive: short yardage and good field position favour going for it.
+// scrimmage = yards from midfield from the offense's side (-30 = own 20, +20 = opponent's 30)
+static int fourth_go(int fg_offered, const char *how) {
+    double yards = rb_get_obj_real(OBJ_CONTROLLER, SLOT_YARDS);
+    double scr = rb_get_obj_real(OBJ_CONTROLLER, SLOT_SCRIMMAGE);
+    if (!(scr > -60 && scr < 60)) scr = 0;
+    double to_goal = 50 - scr, p;
+    if (fg_offered)          p = yards <= 1 ? 0.55 : yards <= 2 ? 0.30 : yards <= 3 && to_goal <= 5 ? 0.35 : 0.0;
+    else if (to_goal <= 40)  p = yards <= 2 ? 0.75 : yards <= 4 ? 0.50 : yards <= 6 ? 0.20 : 0.05;   // no man's land
+    else if (to_goal <= 60)  p = yards <= 1 ? 0.65 : yards <= 2 ? 0.40 : yards <= 4 ? 0.15 : 0.0;    // midfield
+    else if (to_goal <= 75)  p = yards <= 1 ? 0.40 : yards <= 2 ? 0.15 : 0.0;                         // own 25-40
+    else                     p = yards <= 1 ? 0.15 : 0.0;                                             // backed up
+    int go = yards > 0 && frand() < p;
+    rb_log("cpuqb: 4th down (%s, %s offered): 4th and %.1f, %.0f yds to goal, go chance %.0f%% -> %s",
+           how, fg_offered ? "field goal" : "punt", yards, to_goal, p * 100,
            go ? "GO FOR IT" : fg_offered ? "FIELD GOAL" : "PUNT");
-    (void)down;
-    if (go) return ACT_PLAY_4TH;
+    return go;
+}
+
+static int fourth_decide(int fg_offered) {
+    if (fourth_go(fg_offered, "question")) return ACT_PLAY_4TH;
     return fg_offered ? ACT_FIELD_GOAL : ACT_PUNT;
 }
 
@@ -273,20 +288,27 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         double bx = rb_get_builtin_real(ball, SLOT_X), yds = (bx - Q.los_x) * Q.fwd / 20.5;
         if (Q.thrown && Q.prev_st == 3 && (st == 5 || st == 7 || st == 9) && Q.t > Q.t_rel) {
             double T = Q.t - Q.t_rel, best = -1e9, gap = 1e9;
+            int nearest = -1;
             double tx = rb_get_builtin_real(ball, SLOT_X), ty = rb_get_builtin_real(ball, SLOT_Y);
             for (int a = 0; a < Q.nd0; a++)
                 for (int b = 0; b < Q.ndf; b++) {
                     if (Q.df[b].inst != Q.d0[a].inst || !Q.df[b].seen) continue;
                     double da = hypot(Q.d0[a].x - tx, Q.d0[a].y - ty), db = hypot(Q.df[b].x - tx, Q.df[b].y - ty);
-                    if (db < gap) gap = db;
-                    if (da < 260 && (da - db) / T > best) best = (da - db) / T;
+                    if (db < gap) { gap = db; nearest = a; best = (da - db) / T; }
                 }
-            if (best > -1e8) rb_brain_closing(best, gap, st == 9 ? BR_INT : st == 7 ? BR_INCOMPLETE : BR_COMPLETE);
+            if (nearest >= 0) {
+                rb_brain_closing(best, gap, st == 9 ? BR_INT : st == 7 ? BR_INCOMPLETE : BR_COMPLETE);
+                if (st != 9) rb_brain_calibrate(Q.th_open - rb_brain.bias, gap);   // raw model vs reality
+            }
         }
         if (Q.thrown && !Q.scored) {
             if (Q.prev_st == 3 && st == 9) { Q.scored = 1; rb_brain_pass(BR_INT, 0, Q.th_open, Q.th_hdist, rb_def_jumped()); }
             else if (Q.prev_st == 3 && st == 7) { Q.scored = 1; rb_brain_pass(BR_INCOMPLETE, 0, Q.th_open, Q.th_hdist, rb_def_jumped()); }
             else if (Q.prev_st == 3 && st == 5) Q.caught = 1;
+        }
+        if (!Q.scored && Q.prev_st == 2 && st == 11) { Q.scored = 1; rb_brain_gave_up(1); }
+        if (Q.thrown && !Q.scored) {
+            if (0) {}
             else if (Q.caught && (st == 4 || st == 6)) { Q.scored = 1; rb_brain_pass(BR_COMPLETE, yds, Q.th_open, Q.th_hdist, rb_def_jumped()); }
         } else if (Q.ran && !Q.scored && (st == 4 || st == 6)) { Q.scored = 1; rb_brain_run(yds); }
         Q.prev_st = st;
@@ -347,8 +369,7 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
                 char b[48];
                 const char *txt = rb_rv_str(rb_inst_var(btn, SLOT_TXT), b, sizeof b);
                 int punt = strstr(txt, "unt") || strstr(txt, "UNT");
-                int go = Q.yards > 0 && Q.yards <= 1.2 && frand() < (punt ? 0.25 : 0.35);
-                rb_log("cpuqb: 4th and %g, button \"%s\" -> %s", Q.yards, txt, go ? "GO FOR IT" : punt ? "PUNT" : "FIELD GOAL");
+                int go = fourth_go(!punt, "pre-snap");
                 if (!go && punt) { rb_cpuqb_action = ACT_PUNT; Q.phase = PH_DONE; break; }
                 if (!go) {
                     double bx = rb_get_builtin_real(btn, SLOT_X), by = rb_get_builtin_real(btn, SLOT_Y);
@@ -412,11 +433,11 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         else if (!Q.scrambled && held > 15 && pressure < 80 && open < SAFE_OPEN && lane > 50 && frand() < 0.15)
             run = 1;                                                            // pocket breaking down: take off
         else if (pressure < 40 && held > 8) {                                   // about to be hit
-            if (r >= 0 && open > SAFE_OPEN * 0.6) go = 1;                       // tight but catchable
+            if (r >= 0 && open > SAFE_OPEN - 8) go = 1;                         // tight but catchable
             else if (can_scramble) run = 1;
             else away = 1;                                                      // a sack or throw-away beats a pick
         } else if (held >= Q.read_frames + 90) {                                // out of time
-            if (r >= 0 && open > SAFE_OPEN * 0.75) go = 1;
+            if (r >= 0 && open > SAFE_OPEN - 5) go = 1;
             else if (can_scramble) run = 1;
             else away = 1;
         }
@@ -429,6 +450,7 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         } else if (away) {
             Q.tgt = -1; Q.phase = PH_AIM; Q.hold = 0;
             rb_log("cpuqb: throwing it away (pressure %.0f, best open %.0f)", pressure, open);
+            rb_brain_gave_up(0);
         }
         break;
     }

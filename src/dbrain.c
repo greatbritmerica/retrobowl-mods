@@ -18,7 +18,7 @@ static struct {
     CInstance *ball;
     int extreme, kind;              // kind: 0 none, 1 pass, 2 run
     double los, fwd, qby, prev_st;
-    double lx, ly; int zone, scored; unsigned t, t_throw;
+    double lx, ly; int zone, scored, pend; unsigned t, t_throw;
     CInstance *rcv;                 // intended receiver (offense player nearest the landing spot)
 } P;
 
@@ -37,6 +37,13 @@ static void load(void) {
             &b.zone_yds[0], &b.zone_yds[1], &b.zone_yds[2], &b.zone_yds[3], &b.zone_yds[4], &b.zone_yds[5],
             &b.zone_yds[6], &b.zone_yds[7], &b.zone_yds[8], &b.run, &b.run_yds, &b.plays, &b.passes, &b.runs);
         if (n == 23) B = b;
+        double others = 0;
+        for (int i = 0; i < 9; i++) if (i != 1) others += B.zone[i];
+        if (B.passes > 0 && others == 0) {                    // file from the zone bug (every throw read as zone 1)
+            for (int i = 0; i < 9; i++) { B.zone[i] = 0; B.zone_yds[i] = 0; }
+            B.plays -= B.passes; B.passes = 0;
+            rb_log("dbrain: cleared pass-zone data recorded by the zone bug (run data kept)");
+        }
     }
     fclose(f);
     rb_log("dbrain: loaded %d plays (%d passes, %d runs), run share %.2f avg %.1f yds", B.plays, B.passes, B.runs, B.run, B.run_yds);
@@ -122,19 +129,29 @@ void rb_dlearn_step(CInstance *ball, CInstance *other, int human_offense) {
         P.los = qx + P.fwd * 35;
         P.qby = rb_get_builtin_real(qb, SLOT_Y);
     }
+    if (P.pend && st == 3) {                                    // thrown: predict where it lands once it has speed
+        double v = rb_get_inst_real(ball, SLOT_VELOCITY);
+        if (v > 0.5) {
+            double bx = rb_get_builtin_real(ball, SLOT_X), by = rb_get_builtin_real(ball, SLOT_Y);
+            double d = rb_get_builtin_real(ball, SLOT_DIRECTION) / 57.29577951308232;
+            double R = v * (1.0 - pow(DRAG_DECAY, AIR_K * v)) / (1.0 - DRAG_DECAY);
+            P.lx = bx + cos(d) * R; P.ly = by - sin(d) * R;
+            double depth = (P.lx - P.los) * P.fwd / PX_PER_YD, side = (P.ly - P.qby) * (P.fwd > 0 ? 1 : -1);
+            P.zone = (depth < 8 ? 0 : depth < 18 ? 1 : 2) * 3 + (side < -60 ? 0 : side > 60 ? 2 : 1);
+            NearCtx c = { P.lx, P.ly, 1e9, 0 };
+            RValue r = rb_obj_ref(OBJ_PLAYER_OF);
+            rb_with(&r, ball, other, near_cb, &c);
+            P.rcv = c.bd < 120 ? c.best : 0;
+            P.pend = 0;
+            rb_log("dbrain: throw lands ~%.0f yds deep, %s -> zone %d, receiver %s", depth,
+                   side < -60 ? "left" : side > 60 ? "right" : "middle", P.zone, P.rcv ? "found" : "none");
+        }
+    }
     if (st == P.prev_st || !P.fwd) return;
     double bx = rb_get_builtin_real(ball, SLOT_X), by = rb_get_builtin_real(ball, SLOT_Y);
     if (P.prev_st == 2 && st == 3) {                            // thrown: predict where it lands
-        double v = rb_get_inst_real(ball, SLOT_VELOCITY), d = rb_get_builtin_real(ball, SLOT_DIRECTION) / 57.29577951308232;
-        double R = v * (1.0 - pow(DRAG_DECAY, AIR_K * v)) / (1.0 - DRAG_DECAY);
-        P.lx = bx + cos(d) * R; P.ly = by - sin(d) * R;
-        double depth = (P.lx - P.los) * P.fwd / PX_PER_YD, side = (P.ly - P.qby) * (P.fwd > 0 ? 1 : -1);
-        P.zone = (depth < 8 ? 0 : depth < 18 ? 1 : 2) * 3 + (side < -60 ? 0 : side > 60 ? 2 : 1);
-        P.kind = 1; P.t_throw = P.t;
-        NearCtx c = { P.lx, P.ly, 1e9, 0 };
-        RValue r = rb_obj_ref(OBJ_PLAYER_OF);
-        rb_with(&r, ball, other, near_cb, &c);
-        P.rcv = c.bd < 120 ? c.best : 0;
+        (void)bx; (void)by;
+        P.kind = 1; P.t_throw = P.t; P.pend = 1; P.zone = -1; P.rcv = 0;
     } else if (st == 19 || (P.prev_st == 2 && st == 5)) P.kind = 2;         // handoff or QB run
     else if (!P.scored && (st == 4 || st == 6 || st == 7 || st == 9)) {
         P.scored = 1;
@@ -158,7 +175,7 @@ void rb_dlearn_after_ai(CInstance *player) {
     double x = rb_get_builtin_real(player, SLOT_X), y = rb_get_builtin_real(player, SLOT_Y);
     if (x < -9000) return;
     if (rb_get_inst_real(player, SLOT_OFFENSE) > 0.5) return;           // defenders only
-    if (st == 3 && P.kind == 1) {                                       // ball in the air
+    if (st == 3 && P.kind == 1 && P.zone >= 0) {                       // ball in the air (landing known)
         double f = familiarity(P.zone);
         double radius = 30 + 130 * f;                                   // reads from further away
         unsigned delay = (unsigned)(20 - 14 * f);                       // and sooner
