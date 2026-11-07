@@ -108,6 +108,7 @@ RValue *hook_action_result(CInstance *self, CInstance *other, RValue *res, int a
     return r;
 }
 
+static int g_cpu_ball;          // the CPU has the ball on the field (playable defense)
 static int g_cpu_clearing;      // our own response call is closing the message
 
 // per-step ball update: CPU quarterback on CPU drives, ball-state log
@@ -117,6 +118,7 @@ RValue *hook_update_ball(CInstance *self, CInstance *other, RValue *res, int arg
     double human = rb_get_obj_real(OBJ_MASTER, SLOT_PLAYERTEAMINDEX);
     double poss = rb_get_obj_real(OBJ_CONTROLLER, SLOT_POSSESSION);
     int cpu_offense = human >= 0 && poss >= 0 && poss != human;
+    g_cpu_ball = cpu_offense;
     rb_cpuqb_step(self, other, cpu_offense);
     rb_defcall_step(self, other, cpu_offense);
     double los, fwd, qbx, qby;
@@ -190,6 +192,12 @@ void hook_camera_step2(CInstance *self, CInstance *other) {     // obj_camera En
 }
 
 extern unsigned rb_spr_calls;
+// route previews (s_draw_my_route): on CPU drives they'd show the player the CPU's routes
+RValue *hook_draw_route(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
+    if (g_cpu_ball) { res->kind = RV_UNDEFINED; res->i64 = 0; return res; }
+    return ORIG(draw_route)(self, other, res, argc, argv);
+}
+
 // every sprite draw (draw_sprite_ext's engine routine): in 3D the crowd strips are stood up as bleachers
 long hook_spr_draw(CInstance *self, long sprite, long colour, float sub, float x, float y,
                    float xs, float ys, float rot, float alpha) {
