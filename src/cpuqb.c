@@ -271,20 +271,20 @@ static int fourth_choice(int fg_offered, const char *how) {
 
 static int fourth_decide(int fg_offered) { return fourth_choice(fg_offered, "question"); }
 
+// Every frame (from the controller's GUI draw, which keeps running while the game waits on a message -
+// the ball's step doesn't): answer the CPU's 4th-down question a couple of frames after it appears.
+void rb_cpuqb_fourth_tick(void) {
+    if (!rb_cpuqb_fourth_msg) { g_fourth_wait = 0; return; }
+    rb_vf.active = 1; rb_vf.down = 0;                          // the human can't press the CPU's buttons
+    if (++g_fourth_wait < 3) return;
+    rb_cpuqb_action = fourth_decide(rb_cpuqb_fourth_msg == 1);
+    rb_cpuqb_fourth_msg = 0; g_fourth_wait = 0; g_fourth_answered = 1;
+    if (rb_cpuqb_action == ACT_FIELD_GOAL) g_fg_pending = 1;
+}
+
 void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
     rb_vf_frame();
-    if (rb_cpuqb_fourth_msg) {
-        if (!cpu_offense) { rb_cpuqb_fourth_msg = 0; g_fourth_wait = 0; }
-        else {
-            rb_vf.active = 1; rb_vf.down = 0;                  // the human can't press the CPU's buttons
-            if (++g_fourth_wait >= 2) {                         // answer before anyone can tap
-                rb_cpuqb_action = fourth_decide(rb_cpuqb_fourth_msg == 1);
-                rb_cpuqb_fourth_msg = 0; g_fourth_wait = 0; g_fourth_answered = 1;
-                if (rb_cpuqb_action == ACT_FIELD_GOAL) g_fg_pending = 1;
-            }
-            return;
-        }
-    }
+    if (rb_cpuqb_fourth_msg) return;                    // the question is answered from rb_cpuqb_fourth_tick
     double st = rb_get_inst_real(ball, SLOT_STATE);
     if (!cpu_offense) { rb_vf.active = 0; Q.phase = PH_IDLE; Q.ball = 0; g_fg_pending = 0; g_fourth_answered = 0; return; }
     if (ball != Q.ball) new_play(ball);

@@ -115,6 +115,20 @@ static int g_cpu_clearing;      // our own response call is closing the message
 
 // per-step ball update: CPU quarterback on CPU drives, ball-state log
 static double g_last_state = -1;
+// carry out the CPU's 4th-down call, the same way the message buttons do
+static void cpu_fourth_action(CInstance *self, CInstance *other) {
+    if (!rb_cpuqb_action) return;
+    int act = rb_cpuqb_action;
+    rb_cpuqb_action = ACT_NONE;
+    RValue pr = {0}; pr.kind = RV_UNDEFINED;
+    rb_vf.active = 0; rb_vf.down = 0;          // whatever happens next, the screen is the human's again
+    g_cpu_clearing = 1;
+    if (act == ACT_PUNT) { rb_log("cpuqb: punting"); ((GMLScript)RB(0x100094060ULL))(self, other, &pr, 0, 0); }
+    else if (act == ACT_FIELD_GOAL) { rb_log("cpuqb: kicking field goal"); ((GMLScript)RB(0x100087064ULL))(self, other, &pr, 0, 0); }
+    else if (act == ACT_PLAY_4TH) { rb_log("cpuqb: going for it"); ((GMLScript)RB(0x10008b700ULL))(self, other, &pr, 0, 0); }
+    g_cpu_clearing = 0;
+}
+
 RValue *hook_update_ball(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
     rb_frame++;
     double human = rb_get_obj_real(OBJ_MASTER, SLOT_PLAYERTEAMINDEX);
@@ -145,17 +159,7 @@ RValue *hook_update_ball(CInstance *self, CInstance *other, RValue *res, int arg
     } else if (rb_frame - last_kick_log > 120) rb_input_log = 0;
 
     RValue *r = ORIG(update_ball)(self, other, res, argc, argv);
-    if (rb_cpuqb_action) {                     // CPU 4th-down call, made the same way the buttons do
-        int act = rb_cpuqb_action;
-        rb_cpuqb_action = ACT_NONE;
-        RValue pr = {0}; pr.kind = RV_UNDEFINED;
-        rb_vf.active = 0; rb_vf.down = 0;      // whatever happens next, the screen is the human's again
-        g_cpu_clearing = 1;
-        if (act == ACT_PUNT) { rb_log("cpuqb: punting"); ((GMLScript)RB(0x100094060ULL))(self, other, &pr, 0, 0); }
-        else if (act == ACT_FIELD_GOAL) { rb_log("cpuqb: kicking field goal"); ((GMLScript)RB(0x100087064ULL))(self, other, &pr, 0, 0); }
-        else if (act == ACT_PLAY_4TH) { rb_log("cpuqb: going for it"); ((GMLScript)RB(0x10008b700ULL))(self, other, &pr, 0, 0); }
-        g_cpu_clearing = 0;
-    }
+    cpu_fourth_action(self, other);
     return r;
 }
 
@@ -250,6 +254,8 @@ static void gui_draw_player(CInstance *p) { hook_player_draw(p, p); }
 static void gui_draw_ball(CInstance *b) { hook_ball_draw(b, b); }
 
 void hook_controller_gui(CInstance *self, CInstance *other) {
+    rb_cpuqb_fourth_tick();                    // runs even while the game waits on the 4th-down message
+    cpu_fourth_action(self, other);
     rb_cam3d_gui_pass(self, gui_draw_player, gui_draw_ball, gui_draw_text);      // standing players + sky, under the HUD
     ORIG_EV(controller_gui)(self, other);
 }
