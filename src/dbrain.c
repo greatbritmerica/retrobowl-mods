@@ -18,7 +18,7 @@ static struct {
     CInstance *ball;
     int extreme, kind;              // kind: 0 none, 1 pass, 2 run
     double los, fwd, qby, prev_st;
-    double lx, ly; int zone, scored, pend; unsigned t, t_throw;
+    double lx, ly, bx0, by0; int zone, scored, pend; unsigned t, t_throw;
     CInstance *rcv;                 // intended receiver (offense player nearest the landing spot)
 } P;
 
@@ -130,12 +130,14 @@ void rb_dlearn_step(CInstance *ball, CInstance *other, int human_offense) {
         P.qby = rb_get_builtin_real(qb, SLOT_Y);
     }
     if (P.pend && st == 3) {                                    // thrown: predict where it lands once it has speed
+        // direction from the ball's actual movement (the stored direction can point back along the
+        // slingshot drag), range from its speed: v^2-ish flight with drag, minus what it already covered
         double v = rb_get_inst_real(ball, SLOT_VELOCITY);
-        if (v > 0.5) {
-            double bx = rb_get_builtin_real(ball, SLOT_X), by = rb_get_builtin_real(ball, SLOT_Y);
-            double d = rb_get_builtin_real(ball, SLOT_DIRECTION) / 57.29577951308232;
+        double bx = rb_get_builtin_real(ball, SLOT_X), by = rb_get_builtin_real(ball, SLOT_Y);
+        double mx = bx - P.bx0, my = by - P.by0, moved = hypot(mx, my);
+        if (v > 0.5 && moved > 3) {
             double R = v * (1.0 - pow(DRAG_DECAY, AIR_K * v)) / (1.0 - DRAG_DECAY);
-            P.lx = bx + cos(d) * R; P.ly = by - sin(d) * R;
+            P.lx = bx + mx / moved * R; P.ly = by + my / moved * R;
             double depth = (P.lx - P.los) * P.fwd / PX_PER_YD, side = (P.ly - P.qby) * (P.fwd > 0 ? 1 : -1);
             P.zone = (depth < 8 ? 0 : depth < 18 ? 1 : 2) * 3 + (side < -60 ? 0 : side > 60 ? 2 : 1);
             NearCtx c = { P.lx, P.ly, 1e9, 0 };
@@ -150,7 +152,7 @@ void rb_dlearn_step(CInstance *ball, CInstance *other, int human_offense) {
     if (st == P.prev_st || !P.fwd) return;
     double bx = rb_get_builtin_real(ball, SLOT_X), by = rb_get_builtin_real(ball, SLOT_Y);
     if (P.prev_st == 2 && st == 3) {                            // thrown: predict where it lands
-        (void)bx; (void)by;
+        P.bx0 = bx; P.by0 = by;
         P.kind = 1; P.t_throw = P.t; P.pend = 1; P.zone = -1; P.rcv = 0;
     } else if (st == 19 || (P.prev_st == 2 && st == 5)) P.kind = 2;         // handoff or QB run
     else if (!P.scored && (st == 4 || st == 6 || st == 7 || st == 9)) {
@@ -177,8 +179,8 @@ void rb_dlearn_after_ai(CInstance *player) {
     if (rb_get_inst_real(player, SLOT_OFFENSE) > 0.5) return;           // defenders only
     if (st == 3 && P.kind == 1 && P.zone >= 0) {                       // ball in the air (landing known)
         double f = familiarity(P.zone);
-        double radius = 30 + 130 * f;                                   // reads from further away
-        unsigned delay = (unsigned)(20 - 14 * f);                       // and sooner
+        double radius = 80 + 110 * f;                                   // reads from further away
+        unsigned delay = (unsigned)(12 - 8 * f);                        // and sooner
         if (P.rcv && P.t - P.t_throw >= delay && hypot(P.lx - x, P.ly - y) < radius) {
             double rx = rb_get_builtin_real(P.rcv, SLOT_X), ry = rb_get_builtin_real(P.rcv, SLOT_Y);
             if (rx > -9000) {                                           // jump the route: go to the receiver
