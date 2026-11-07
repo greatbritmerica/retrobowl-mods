@@ -43,6 +43,7 @@ static struct {
     double btn_x, btn_y;
     unsigned sw_t, sw_cool; double sw_dir, sw_x, sw_y;   // juke swipe in progress
     double prev_st, th_open, th_hdist; int thrown, caught, ran, scored;   // results, for learning
+    struct { CInstance *inst; double x, y; } d0[16]; int nd0; unsigned t_rel;   // defenders at release
 } Q;
 
 static int g_fg_pending;       // CPU chose a field goal; survives the kick set-up
@@ -146,7 +147,7 @@ static void lead_point(int i, double *lx, double *ly, double *speed) {
 
 // Defenders react once the ball is up: assume each keeps his momentum for part of the flight and
 // then gains DEF_CLOSE px/frame on the ball. Clearance = how far the nearest one still is.
-#define DEF_CLOSE  0.30
+#define DEF_CLOSE  (rb_brain.def_close)    // px/frame defenders gain on the ball (learned from every pass)
 #define SAFE_OPEN  (rb_brain.safe_open)   // clearance needed to call a man open (learned)
 #define LANE_MIN   10.0       // clearance needed along the catchable part of the flight
 
@@ -154,8 +155,9 @@ static double clearance_at(double bx, double by, double t) {
     double best = 1e9;
     for (int i = 0; i < Q.ndf; i++) {
         if (!Q.df[i].seen) continue;
-        double px = Q.df[i].x + Q.df[i].vx * t * 0.4, py = Q.df[i].y + Q.df[i].vy * t * 0.4;
-        double d = hypot(px - bx, py - by) - DEF_CLOSE * t;
+        double react = t < 8 ? t : 8;                         // keeps his line for a few frames, then breaks on it
+        double px = Q.df[i].x + Q.df[i].vx * react, py = Q.df[i].y + Q.df[i].vy * react;
+        double d = hypot(px - bx, py - by) - DEF_CLOSE * (t - react);
         if (d < best) best = d;
     }
     return best;
@@ -269,6 +271,18 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
     if (ball != Q.ball) new_play(ball);
     if (st != Q.prev_st && Q.fwd) {                                     // results -> learning
         double bx = rb_get_builtin_real(ball, SLOT_X), yds = (bx - Q.los_x) * Q.fwd / 20.5;
+        if (Q.thrown && Q.prev_st == 3 && (st == 5 || st == 7 || st == 9) && Q.t > Q.t_rel) {
+            double T = Q.t - Q.t_rel, best = -1e9, gap = 1e9;
+            double tx = rb_get_builtin_real(ball, SLOT_X), ty = rb_get_builtin_real(ball, SLOT_Y);
+            for (int a = 0; a < Q.nd0; a++)
+                for (int b = 0; b < Q.ndf; b++) {
+                    if (Q.df[b].inst != Q.d0[a].inst || !Q.df[b].seen) continue;
+                    double da = hypot(Q.d0[a].x - tx, Q.d0[a].y - ty), db = hypot(Q.df[b].x - tx, Q.df[b].y - ty);
+                    if (db < gap) gap = db;
+                    if (da < 260 && (da - db) / T > best) best = (da - db) / T;
+                }
+            if (best > -1e8) rb_brain_closing(best, gap, st == 9 ? BR_INT : st == 7 ? BR_INCOMPLETE : BR_COMPLETE);
+        }
         if (Q.thrown && !Q.scored) {
             if (Q.prev_st == 3 && st == 9) { Q.scored = 1; rb_brain_pass(BR_INT, 0, Q.th_open, Q.th_hdist, rb_def_jumped()); }
             else if (Q.prev_st == 3 && st == 7) { Q.scored = 1; rb_brain_pass(BR_INCOMPLETE, 0, Q.th_open, Q.th_hdist, rb_def_jumped()); }
@@ -398,12 +412,11 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         else if (!Q.scrambled && held > 15 && pressure < 80 && open < SAFE_OPEN && lane > 50 && frand() < 0.15)
             run = 1;                                                            // pocket breaking down: take off
         else if (pressure < 40 && held > 8) {                                   // about to be hit
-            if (r >= 0 && open > 0) go = 1;                                     // tight but catchable
+            if (r >= 0 && open > SAFE_OPEN * 0.6) go = 1;                       // tight but catchable
             else if (can_scramble) run = 1;
-            else if (r >= 0 && open > 6) go = 1;
-            else away = 1;
+            else away = 1;                                                      // a sack or throw-away beats a pick
         } else if (held >= Q.read_frames + 90) {                                // out of time
-            if (r >= 0 && open > 8) go = 1;
+            if (r >= 0 && open > SAFE_OPEN * 0.75) go = 1;
             else if (can_scramble) run = 1;
             else away = 1;
         }
@@ -443,6 +456,9 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
                 double hx, hy;
                 Q.thrown = 1;
                 Q.th_hdist = rb_def_human(&hx, &hy) ? hypot(hx - lx, hy - ly) : 999;
+                Q.nd0 = 0; Q.t_rel = Q.t;
+                for (int a = 0; a < Q.ndf && Q.nd0 < 16; a++)
+                    if (Q.df[a].seen) { Q.d0[Q.nd0].inst = Q.df[a].inst; Q.d0[Q.nd0].x = Q.df[a].x; Q.d0[Q.nd0].y = Q.df[a].y; Q.nd0++; }
             }
             rb_log("cpuqb: release toward %.0f,%.0f drag %.0f (qb %.0f,%.0f)", lx, ly, drag, Q.qbx, Q.qby);
         }

@@ -10,7 +10,10 @@
 #include "input.h"
 #include "camera3d.h"
 
-int rb_cam3d_on = 1;
+#ifndef RB_CAM3D
+#define RB_CAM3D 1
+#endif
+int rb_cam3d_on = RB_CAM3D;
 
 #define CAM_BACK    240.0     // eye distance behind the ball carrier (backfield stays in view)
 #define CAM_HEIGHT  125.0     // eye height above the field
