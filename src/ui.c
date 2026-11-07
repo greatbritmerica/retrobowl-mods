@@ -1,6 +1,7 @@
 // ui.c - native iOS popups (UIAlertController via the Objective-C runtime).
 #include "rb.h"
 #include "ui.h"
+#include "sys.h"
 
 #ifndef RB_FREESTANDING
 #include <objc/runtime.h>
@@ -86,5 +87,71 @@ void rb_ui_choice_n(const char *title, const char *message, const char **buttons
             MSG(void, id)(pop, S("setSourceView:"), view);
         }
         MSG(void, id, _Bool, id)(vc, S("presentViewController:animated:completion:"), alert, 1, 0);
+    });
+}
+
+// ---------------------------------------------------------------- compact side menu
+// A small panel down the left edge so the formation stays visible. cb(i) is 1-based.
+typedef struct { double x, y, w, h; } RbRect;
+typedef struct { double top, left, bottom, right; } RbInsets;
+static id g_side;
+
+static id make_label(const char *text, double size, double x, double y, double w, double h, int bold) {
+    id l = MSG(id, RbRect)(MSG(id)(C("UILabel"), S("alloc")), S("initWithFrame:"), (RbRect){ x, y, w, h });
+    MSG(void, id)(l, S("setText:"), nsstr(text));
+    MSG(void, long)(l, S("setNumberOfLines:"), 0);
+    MSG(void, id)(l, S("setTextColor:"), MSG(id)(C("UIColor"), S("whiteColor")));
+    id font = bold ? MSG(id, double)(C("UIFont"), S("boldSystemFontOfSize:"), size)
+                   : MSG(id, double)(C("UIFont"), S("systemFontOfSize:"), size);
+    MSG(void, id)(l, S("setFont:"), font);
+    return l;
+}
+
+void rb_ui_side_menu(const char *title, const char *message, const char **buttons, int n, void (*cb)(int)) {
+    if (n > 6) n = 6;
+    char t[96], m[240], bt[6][32];
+    snprintf(t, sizeof t, "%s", title ? title : "");
+    snprintf(m, sizeof m, "%s", message ? message : "");
+    for (int i = 0; i < n; i++) snprintf(bt[i], sizeof bt[i], "%s", buttons[i]);
+    struct { char t[96], m[240], b[6][32]; int n; } c;
+    memcpy(c.t, t, sizeof t); memcpy(c.m, m, sizeof m); memcpy(c.b, bt, sizeof bt); c.n = n;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        id app = MSG(id)(C("UIApplication"), S("sharedApplication"));
+        id win = app ? MSG(id)(app, S("keyWindow")) : 0;
+        if (!win) { id ws = app ? MSG(id)(app, S("windows")) : 0; win = ws ? MSG(id)(ws, S("firstObject")) : 0; }
+        if (!win) { rb_log("ui: no window"); cb(0); return; }
+        if (g_side) { MSG(void)(g_side, S("removeFromSuperview")); g_side = 0; }
+        RbRect wb = MSG(RbRect)(win, S("bounds"));
+        RbInsets in = MSG(RbInsets)(win, S("safeAreaInsets"));
+        double W = 176, bh = 38, gap = 6, pad = 10;
+        double th = 20, mh = c.m[0] ? 64 : 0;
+        double H = pad + th + (mh ? mh + 4 : 0) + c.n * (bh + gap) + pad - gap;
+        double x = in.left + 6, y = (wb.h - H) / 2;
+        if (y < in.top + 4) y = in.top + 4;
+        id panel = MSG(id, RbRect)(MSG(id)(C("UIView"), S("alloc")), S("initWithFrame:"), (RbRect){ x, y, W, H });
+        MSG(void, id)(panel, S("setBackgroundColor:"), MSG(id, double, double)(C("UIColor"), S("colorWithWhite:alpha:"), 0.0, 0.62));
+        id layer = MSG(id)(panel, S("layer"));
+        MSG(void, double)(layer, S("setCornerRadius:"), 12.0);
+        double cy = pad;
+        MSG(void, id)(panel, S("addSubview:"), make_label(c.t, 15, pad, cy, W - 2 * pad, th, 1));
+        cy += th;
+        if (mh) { MSG(void, id)(panel, S("addSubview:"), make_label(c.m, 11, pad, cy, W - 2 * pad, mh, 0)); cy += mh + 4; }
+        for (int i = 0; i < c.n; i++) {
+            int idx = i + 1;
+            id act = MSG(id, id, id, id, void (^)(id))(C("UIAction"), S("actionWithTitle:image:identifier:handler:"),
+                         nsstr(c.b[i]), 0, 0, ^(id a) {
+                             if (g_side) { MSG(void)(g_side, S("removeFromSuperview")); g_side = 0; }
+                             cb(idx);
+                         });
+            id btn = MSG(id, long, id)(C("UIButton"), S("buttonWithType:primaryAction:"), 1, act);
+            MSG(void, RbRect)(btn, S("setFrame:"), (RbRect){ pad, cy, W - 2 * pad, bh });
+            MSG(void, id)(btn, S("setBackgroundColor:"), MSG(id, double, double)(C("UIColor"), S("colorWithWhite:alpha:"), 1.0, 0.16));
+            MSG(void, id, unsigned long)(btn, S("setTitleColor:forState:"), MSG(id)(C("UIColor"), S("whiteColor")), 0);
+            MSG(void, double)(MSG(id)(btn, S("layer")), S("setCornerRadius:"), 8.0);
+            MSG(void, id)(panel, S("addSubview:"), btn);
+            cy += bh + gap;
+        }
+        MSG(void, id)(win, S("addSubview:"), panel);
+        g_side = panel;
     });
 }

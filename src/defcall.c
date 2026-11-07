@@ -65,7 +65,7 @@ int rb_defcall_ready(int down, double yards, unsigned look_frames) {
         snprintf(title, sizeof title, "%s & %.0f  -  your call", dn, yards < 1 ? 1 : yards);
         snprintf(msg, sizeof msg, "%s", g_last[0] ? g_last : "Read their formation, then call it.");
         static const char *b[4] = { "Blitz", "Man", "Short zone", "Deep zone" };
-        rb_ui_choice_n(title, msg, b, 4, on_call);
+        rb_ui_side_menu(title, msg, b, 4, on_call);
     }
     return 0;
 }
