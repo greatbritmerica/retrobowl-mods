@@ -42,6 +42,7 @@ enum { OBJ_BTN_FIELDGOAL = 16, OBJ_BALL = 3, OBJ_CONTROLLER = 44, OBJ_MASTER = 8
 #define SLOT_OP_DIFFICULTY   0x100fa71d8ULL
 #define SLOT_RUNNING_PLAY    0x100fa8138ULL
 #define SLOT_OFFENSE         0x100fa70f8ULL
+#define SLOT_MY_ACCEL        0x100fa6ca8ULL   // per-player acceleration (scales movement and jdir/jforce)
 #define SLOT_X               0x100fb07e8ULL
 #define SLOT_Y               0x100fb0808ULL
 #define SLOT_DIRECTION       0x100fb0a98ULL
