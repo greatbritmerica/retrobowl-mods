@@ -369,7 +369,10 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
                 char b[48];
                 const char *txt = rb_rv_str(rb_inst_var(btn, SLOT_TXT), b, sizeof b);
                 int punt = strstr(txt, "unt") || strstr(txt, "UNT");
-                int go = fourth_go(!punt, "pre-snap");
+                // The 4th-down question has already been answered by now (by the player, or the game moved
+                // on). Getting here means "play 4th down" was chosen: honour it, never kick on our own.
+                int go = 1;
+                rb_log("cpuqb: 4th and %.1f, play 4th down was chosen -> GO FOR IT (button \"%s\")", Q.yards, txt);
                 if (!go && punt) { rb_cpuqb_action = ACT_PUNT; Q.phase = PH_DONE; break; }
                 if (!go) {
                     double bx = rb_get_builtin_real(btn, SLOT_X), by = rb_get_builtin_real(btn, SLOT_Y);

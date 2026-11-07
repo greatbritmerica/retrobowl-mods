@@ -158,6 +158,8 @@ RValue *hook_create_message(CInstance *self, CInstance *other, RValue *res, int 
     RValue *r = ORIG(create_message)(self, other, res, argc, argv);
     char b[64];
     const char *txt = argc > 0 ? rb_rv_str(argv[0], b, sizeof b) : "";
+    static int dbg;
+    if (dbg < 12) { dbg++; rb_log("create_message: argc %d kind %u text \"%.40s\"", argc, argc > 0 && argv[0] ? argv[0]->kind : 999, txt); }
     if (!(strstr(txt, "4th") || strstr(txt, "ourth"))) return r;          // only the 4th-down question
     if (!rb_obj_exists(OBJ_CONTROLLER)) return r;                          // not in a match
     double human = rb_get_obj_real(OBJ_MASTER, SLOT_PLAYERTEAMINDEX);
