@@ -304,7 +304,9 @@ static void gui_draw_text(CInstance *t) { hook_fieldtxt_draw(t, t); }
 static void gui_draw_player(CInstance *p) { hook_player_draw(p, p); }
 static void gui_draw_ball(CInstance *b) { hook_ball_draw(b, b); }
 
+extern CInstance *rb_game_controller;
 void hook_controller_gui(CInstance *self, CInstance *other) {
+    rb_game_controller = self;
     rb_cpuqb_fourth_tick();                    // runs even while the game waits on the 4th-down message
     cpu_fourth_action(self, other);
     rb_cam3d_gui_pass(self, gui_draw_player, gui_draw_ball, gui_draw_text);      // standing players + sky, under the HUD

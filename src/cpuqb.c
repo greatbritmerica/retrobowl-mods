@@ -46,6 +46,7 @@ static struct {
     double prev_st, th_open, th_hdist; int thrown, caught, ran, scored;   // results, for learning
     struct { CInstance *inst; double x, y; } d0[16]; int nd0; unsigned t_rel;   // defenders at release
     int called;                                                         // defensive call made for this play
+    double err_x, err_y, err_v;                                         // this throw's inaccuracy
 } Q;
 
 static int g_fg_pending;       // CPU chose a field goal; survives the kick set-up
@@ -57,6 +58,42 @@ int rb_cpuqb_action;           // what hooks.c should run after the ball update 
 static double g_k_per_mtp;       // speed-per-drag / my_throw_power, measured from a real throw
 
 static double frand(void) { return arc4random_uniform(10000) / 10000.0; }
+static double frange(double a, double b) { return a + (b - a) * frand(); }
+static double gauss(void) { return (frand() + frand() + frand() + frand() - 2.0) * 1.7; }   // ~N(0,1)
+
+// ---- variety: so he doesn't play the same way every few snaps
+// A personality rolled for each game (a different QB every game), small random choices every play,
+// and play-calling that leans toward what has worked against the player this game.
+CInstance *rb_game_controller;                  // set from hooks.c; a new one = a new game
+static struct {
+    CInstance *game;
+    double aggro;       // -1 careful .. +1 gunslinger: how tight a window he'll throw into, deep appetite
+    double patience;    // read time multiplier
+    double mobility;    // how readily he scrambles
+    double run_lean;    // run/pass lean
+    double accuracy;    // throw error scale (lower = sharper)
+    double yds[3]; int n[3];   // this game: avg yards by play type (run / short / deep)
+    int last_type, streak;
+} V;
+// per play
+static struct { int primary; double eyes, pressure_line, hot_frames, cut_margin, cut_cost; } PV;
+
+static void variety_new_game(void) {
+    V.game = rb_game_controller;
+    V.aggro = gauss() * 0.45; if (V.aggro > 1) V.aggro = 1; if (V.aggro < -1) V.aggro = -1;
+    V.patience = frange(0.7, 1.35);
+    V.mobility = frange(0.5, 1.9);
+    V.run_lean = gauss() * 0.06;
+    V.accuracy = frange(0.7, 1.3);
+    for (int i = 0; i < 3; i++) { V.yds[i] = 5; V.n[i] = 0; }
+    V.last_type = -1; V.streak = 0;
+    rb_log("cpuqb: this game's QB - aggression %+.2f, patience %.2f, mobility %.2f, run lean %+.2f, accuracy %.2f",
+           V.aggro, V.patience, V.mobility, V.run_lean, V.accuracy);
+}
+static void variety_result(int type, double yds) {
+    if (type < 0 || type > 2) return;
+    V.yds[type] += (yds - V.yds[type]) * 0.3; V.n[type]++;
+}
 
 // ---------------------------------------------------------------- tracking players
 typedef struct { Track *t; int *n; } CollectCtx;
@@ -203,7 +240,9 @@ static int pick_receiver(double *score_out, double *open_out) {
         open += rb_brain.bias;                                // learned: how much roomier throws really are
         if (r->turn > 6) open -= 15;                          // mid-cut: the lead won't hold
         double gain = (lx - Q.los_x) * Q.fwd;
-        double score = open * 0.8 + gain * (Q.deep ? 0.45 : 0.25) - (open < SAFE_OPEN ? 80 : 0) + frand() * 10;
+        double bar = SAFE_OPEN - 6 * V.aggro;
+        double score = open * 0.8 + gain * (Q.deep ? 0.45 : 0.25) - (open < bar ? 80 : 0) + frand() * 14;
+        if (i == PV.primary && Q.phase == PH_READ && Q.t - Q.t_phase < PV.eyes) score += 30;   // staring him down
         if (gain < 40) score -= 20;                          // dump-offs at the line are a last resort
         if (Q.down >= 3 && gain < Q.yards * 20 - 20) score -= 25;   // short of the sticks on 3rd/4th
         if (score > best_score) { best_score = score; best = i; best_open = open; }
@@ -307,15 +346,15 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
             }
         }
         if (Q.thrown && !Q.scored) {
-            if (Q.prev_st == 3 && st == 9) { Q.scored = 1; rb_brain_pass(BR_INT, 0, Q.th_open, Q.th_hdist, rb_def_jumped()); }
-            else if (Q.prev_st == 3 && st == 7) { Q.scored = 1; rb_brain_pass(BR_INCOMPLETE, 0, Q.th_open, Q.th_hdist, rb_def_jumped()); }
+            if (Q.prev_st == 3 && st == 9) { Q.scored = 1; rb_brain_pass(BR_INT, 0, Q.th_open, Q.th_hdist, rb_def_jumped()); variety_result(Q.deep ? 2 : 1, -10); }
+            else if (Q.prev_st == 3 && st == 7) { Q.scored = 1; rb_brain_pass(BR_INCOMPLETE, 0, Q.th_open, Q.th_hdist, rb_def_jumped()); variety_result(Q.deep ? 2 : 1, 0); }
             else if (Q.prev_st == 3 && st == 5) Q.caught = 1;
         }
         if (!Q.scored && Q.prev_st == 2 && st == 11) { Q.scored = 1; rb_brain_gave_up(1); }
         if (Q.thrown && !Q.scored) {
             if (0) {}
-            else if (Q.caught && (st == 4 || st == 6)) { Q.scored = 1; rb_brain_pass(BR_COMPLETE, yds, Q.th_open, Q.th_hdist, rb_def_jumped()); }
-        } else if (Q.ran && !Q.scored && (st == 4 || st == 6)) { Q.scored = 1; rb_brain_run(yds); }
+            else if (Q.caught && (st == 4 || st == 6)) { Q.scored = 1; rb_brain_pass(BR_COMPLETE, yds, Q.th_open, Q.th_hdist, rb_def_jumped()); variety_result(Q.deep ? 2 : 1, yds); }
+        } else if (Q.ran && !Q.scored && (st == 4 || st == 6)) { Q.scored = 1; rb_brain_run(yds); variety_result(0, yds); }
         Q.prev_st = st;
     }
 
@@ -363,8 +402,30 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         else if (Q.down >= 2 && Q.yards >= 8) p_run -= 0.12;
         if (Q.down >= 3 && Q.yards >= 4) p_run = 0.12;
         double p_deep = Q.down >= 3 && Q.yards >= 10 ? 0.35 : 0.18;
+        if (V.game != rb_game_controller || !V.game) variety_new_game();
+        p_run += V.run_lean;
+        p_deep *= 1.0 + 0.6 * V.aggro;
+        // lean on what's working this game (after a few tries of each)
+        if (V.n[0] >= 2 && V.n[1] >= 2) p_run += (V.yds[0] - V.yds[1]) * 0.02;
+        if (V.n[2] >= 1 && V.n[1] >= 2) p_deep += (V.yds[2] - V.yds[1]) * 0.01;
+        if (p_run < 0.05) p_run = 0.05;
+        if (p_run > 0.85) p_run = 0.85;
+        if (p_deep < 0.03) p_deep = 0.03;
+        if (p_deep > 0.6) p_deep = 0.6;
         Q.is_run = frand() < p_run;
         Q.deep = !Q.is_run && frand() < p_deep;
+        int type = Q.is_run ? 0 : Q.deep ? 2 : 1;
+        if (type == V.last_type && V.streak >= 2 && frand() < 0.7) {   // three of the same in a row is rare
+            Q.is_run = !Q.is_run && frand() < 0.6; Q.deep = !Q.is_run && type != 2 && frand() < p_deep;
+            type = Q.is_run ? 0 : Q.deep ? 2 : 1;
+        }
+        V.streak = type == V.last_type ? V.streak + 1 : 0; V.last_type = type;
+        // this play's habits
+        PV.primary = -2;                                           // picked when the read starts
+        PV.pressure_line = frange(30, 50);
+        PV.hot_frames = frange(9, 22);
+        PV.cut_margin = frange(12, 34);
+        PV.cut_cost = frange(2, 7);
         int show_run = Q.is_run ^ (frand() < 0.20);
         int show_deep = !show_run && (Q.deep ^ (frand() < 0.15));
         rb_defcall_disguise(show_run != Q.is_run || (!show_run && !Q.is_run && show_deep != Q.deep));
@@ -470,7 +531,20 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         finger(1, P0X - Q.fwd * 30, P0Y);
         if (st == 2) {
             Q.phase = PH_READ; Q.t_phase = Q.t;
-            Q.read_frames = Q.scrambled ? 6 : 35 + arc4random_uniform(60);
+            Q.read_frames = Q.scrambled ? 6 : (unsigned)((30 + arc4random_uniform(70)) * V.patience);
+            PV.primary = -1;                                    // eyes on one man first
+            {
+                int cand[16], nc = 0;
+                for (int i = 0; i < Q.nof && nc < 16; i++) {
+                    Track *r = &Q.of[i];
+                    if (!r->seen || r->inst == Q.qb) continue;
+                    double depth = (r->x - Q.los_x) * Q.fwd;
+                    if (depth > -22 && depth < 22 && hypot(r->vx, r->vy) < 1.6) continue;
+                    cand[nc++] = i;
+                }
+                if (nc) PV.primary = cand[arc4random_uniform(nc)];
+                PV.eyes = Q.read_frames * frange(0.4, 0.8);
+            }
         } else if (Q.t - Q.t_phase > 40) {                      // didn't take: lift and retry
             finger(0, P0X, P0Y); Q.phase = PH_PRESNAP; Q.t_phase = Q.t + 10;
         }
@@ -491,16 +565,16 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
             double room = nearest_def(Q.qbx + Q.fwd * 70, ly, 10) - (k < 0 ? -k : k) * 5;
             if (room > lane) lane = room;
         }
-        int can_scramble = !Q.scrambled && lane > 45;
+        int can_scramble = !Q.scrambled && lane > 55 - 12 * V.mobility;
         int go = 0, away = 0, run = 0;
-        if (rb_defcall_blitz() && !Q.deep && held >= 14 && r >= 0 && open > SAFE_OPEN - 12) {
+        if (rb_defcall_blitz() && !Q.deep && held >= PV.hot_frames && r >= 0 && open > SAFE_OPEN - 12) {
             go = 1;                                                             // blitz: hit the hot route
             rb_log("cpuqb: blitz read - hot route");
         }
-        else if (held >= Q.read_frames && r >= 0 && open > SAFE_OPEN) go = 1;     // open man
-        else if (!Q.scrambled && held > 15 && pressure < 80 && open < SAFE_OPEN && lane > 50 && frand() < 0.15)
+        else if (held >= Q.read_frames && r >= 0 && open > SAFE_OPEN - 6 * V.aggro) go = 1;   // open man
+        else if (!Q.scrambled && held > 15 && pressure < 80 && open < SAFE_OPEN && lane > 60 - 12 * V.mobility && frand() < 0.10 * V.mobility)
             run = 1;                                                            // pocket breaking down: take off
-        else if (pressure < 40 && held > 8) {                                   // about to be hit
+        else if (pressure < PV.pressure_line && held > 8) {                     // about to be hit
             if (r >= 0 && open > SAFE_OPEN - 8) go = 1;                         // tight but catchable
             else if (can_scramble) run = 1;
             else away = 1;                                                      // a sack or throw-away beats a pick
@@ -531,6 +605,12 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
             lx = Q.qbx + Q.fwd * 110; ly = Q.qby + (Q.qby < 300 ? -320 : 320);
             v = speed_for_range(hypot(lx - Q.qbx, ly - Q.qby) * 1.25);
         }
+        if (Q.hold == 0) {                                      // one miss per throw, picked as he winds up
+            double pr = nearest_def(Q.qbx, Q.qby, 0);
+            double sig = (5 + (pr < 60 ? 9 : 0) + hypot(lx - Q.qbx, ly - Q.qby) * 0.025) * V.accuracy;
+            Q.err_x = gauss() * sig; Q.err_y = gauss() * sig; Q.err_v = 1.0 + gauss() * 0.035 * V.accuracy;
+        }
+        lx += Q.err_x; ly += Q.err_y; v *= Q.err_v;
         double dx = lx - Q.qbx, dy = ly - Q.qby, len = hypot(dx, dy);
         if (len < 1) len = 1;
         double drag = v / Q.k;
@@ -644,11 +724,11 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
                 double d = hypot(ahead * 0.55, Q.df[i].y - ly);
                 if (d < room) room = d;
             }
-            room -= (k < 0 ? -k : k) * 4;                    // cutting costs a step
+            room -= (k < 0 ? -k : k) * PV.cut_cost;          // cutting costs a step
             if (k == 0) room_here = room;
             if (room > room_best) { room_best = room; lane_best = ly; }
         }
-        if (best >= 80 && room_best > room_here + 22 && fabs(lane_best - Q.qby) >= 25) {
+        if (best >= 80 && room_best > room_here + PV.cut_margin && fabs(lane_best - Q.qby) >= 25) {
             best = 0; threat_dy = Q.qby - lane_best;    // reuse the juke: move away from "threat" = toward the lane
             if (Q.t % 30 == 0) rb_log("cpuqb: cutting toward a lane %.0f %s (room %.0f vs %.0f)",
                                      fabs(lane_best - Q.qby), lane_best > Q.qby ? "down" : "up", room_best, room_here);
