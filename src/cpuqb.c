@@ -482,7 +482,14 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         double pressure = nearest_def(Q.qbx, Q.qby, 0);
         double score, open;
         int r = pick_receiver(&score, &open);
-        double lane = nearest_def(Q.qbx + Q.fwd * 80, Q.qby, 10);
+        // escape lanes: the middle is always full of linemen, so look across the whole front
+        double lane = -1;
+        for (int k = -4; k <= 4; k++) {
+            double ly = Q.qby + k * 30;
+            if (ly < 150 || ly > 450) continue;
+            double room = nearest_def(Q.qbx + Q.fwd * 70, ly, 10) - (k < 0 ? -k : k) * 5;
+            if (room > lane) lane = room;
+        }
         int can_scramble = !Q.scrambled && lane > 45;
         int go = 0, away = 0, run = 0;
         if (rb_defcall_blitz() && !Q.deep && held >= 14 && r >= 0 && open > SAFE_OPEN - 12) {
