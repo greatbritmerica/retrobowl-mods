@@ -254,7 +254,7 @@ static int fourth_choice(int fg_offered, const char *how) {
     double scr = rb_get_obj_real(OBJ_CONTROLLER, SLOT_SCRIMMAGE);
     if (!(scr > -60 && scr < 60)) scr = 0;
     double to_goal = 50 - scr, fg_dist = to_goal + 17, p;
-    int in_range = fg_dist <= 54;
+    int in_range = fg_dist <= 57;
     rb_cpuqb_fg_dist = fg_dist;
     if (in_range)            p = yards <= 1 ? 0.55 : yards <= 2 ? 0.30 : yards <= 3 && to_goal <= 5 ? 0.35 : 0.03;
     else if (to_goal <= 45)  p = yards <= 2 ? 0.75 : yards <= 4 ? 0.50 : yards <= 6 ? 0.20 : 0.05;   // no man's land
@@ -622,6 +622,28 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
             if (ahead < -10 || ahead > 95 || fabs(dy) > 50) continue;
             double d = hypot(ahead, dy);
             if (d < best) { best = d; threat_dy = dy; }
+        }
+        // running lanes: look ahead for the y with the most room and cut toward it
+        double lane_best = Q.qby, room_best = -1, room_here = -1;
+        for (int k = -4; k <= 4; k++) {
+            double ly = Q.qby + k * 30;
+            if (ly < 150 || ly > 450) continue;
+            double room = 999;
+            for (int i = 0; i < Q.ndf; i++) {
+                if (!Q.df[i].seen) continue;
+                double ahead = (Q.df[i].x - Q.qbx) * Q.fwd;
+                if (ahead < -15 || ahead > 170) continue;
+                double d = hypot(ahead * 0.55, Q.df[i].y - ly);
+                if (d < room) room = d;
+            }
+            room -= (k < 0 ? -k : k) * 4;                    // cutting costs a step
+            if (k == 0) room_here = room;
+            if (room > room_best) { room_best = room; lane_best = ly; }
+        }
+        if (best >= 80 && room_best > room_here + 22 && fabs(lane_best - Q.qby) >= 25) {
+            best = 0; threat_dy = Q.qby - lane_best;    // reuse the juke: move away from "threat" = toward the lane
+            if (Q.t % 30 == 0) rb_log("cpuqb: cutting toward a lane %.0f %s (room %.0f vs %.0f)",
+                                     fabs(lane_best - Q.qby), lane_best > Q.qby ? "down" : "up", room_best, room_here);
         }
         if (best < 80) {
             double dir = threat_dy > 0 ? -1 : 1;    // screen y: +1 = down

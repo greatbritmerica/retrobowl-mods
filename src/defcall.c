@@ -1,9 +1,9 @@
 // defcall.c - the player calls the defense on CPU drives.
 //
 // Before every CPU snap the player sees the formation for a moment, then picks a call:
-//   Blitz       - linebackers join the rush: wrecks runs and deep drops, gets burned by quick throws
+//   Blitz       - linebackers join the rush: wrecks deep drops, gets burned by quick throws
 //   Man         - tight on short routes, weak against the run (backs turned)
-//   Short zone  - squats on short routes and the run, gets beaten deep
+//   Short zone  - plugs the run, gets beaten deep
 //   Deep zone   - takes away the deep ball, soft against the run
 // The CPU's play (run / short / deep) shows in its formation (cpuqb.c): back right behind the QB =
 // run-heavy, back offset or gone = pass, receivers split wide = deep shots more likely.
@@ -26,11 +26,12 @@ enum { PLAY_RUN, PLAY_SHORT, PLAY_DEEP };
 static const char *CALL_NAME[] = { "-", "Blitz", "Man", "Short zone", "Deep zone" };
 static const char *PLAY_NAME[] = { "RUN", "SHORT PASS", "DEEP PASS" };
 //                                   run short deep
+// each call: one strength, one weakness (no call is right more than about a third of the time)
 static const int MATCH[5][3] = { {  0,  0,  0 },
-                                 { +1, -1, +1 },     // blitz
-                                 { -1, +1,  0 },     // man
-                                 { +1, +1, -1 },     // short zone
-                                 { -1,  0, +1 } };   // deep zone
+                                 {  0, -1, +1 },     // blitz:      sacks the deep drop, burned by the quick throw
+                                 { -1, +1,  0 },     // man:        blankets short routes, backs turned on runs
+                                 { +1,  0, -1 },     // short zone: plugs the run, beaten over the top
+                                 { -1,  0, +1 } };   // deep zone:  takes away the bomb, soft against the run
 
 #define LOOK_FRAMES  45          // formation on screen before the call menu
 #define RUSH_DEPTH   45.0        // defenders this close to the line at the snap are rushers
