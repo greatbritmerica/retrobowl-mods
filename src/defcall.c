@@ -48,6 +48,7 @@ static struct {
     double los, fwd, qbx, qby;
     struct { CInstance *inst; double x, y; int rusher, blitz; } d[16]; int nd;
     CInstance *ball;
+    int wrapped, wrapped_prev; unsigned t_wrap, wrap_frames;   // teammates hanging on the carrier
 } S;
 
 static void on_call(int c) {                  // main thread
@@ -83,12 +84,51 @@ void rb_defcall_snap(int is_run, int deep) {
            g_match > 0 ? "RIGHT CALL" : g_match < 0 ? "WRONG CALL" : "neutral", g_rights, g_calls);
     snprintf(g_last, sizeof g_last, "Last: %s - %s %s (%d/%d)", PLAY_NAME[g_play], CALL_NAME[g_call],
              g_match > 0 ? "RIGHT" : g_match < 0 ? "wrong" : "ok", g_rights, g_calls);
-    S.live = 1; S.t_snap = S.t; S.t_throw = S.t_hand = S.t_catch = 0; S.nd = 0;
+    S.live = 1; S.t_snap = S.t; S.t_throw = S.t_hand = S.t_catch = 0; S.nd = 0; S.wrap_frames = 0; S.wrapped = 0;
 }
 
 int rb_defcall_blitz(void) { return S.live && g_call == CALL_BLITZ; }
 
 void rb_defcall_reset(void) { if (!g_open) { g_asked = 0; g_answer = 0; } S.live = 0; }
+
+// the offensive player carrying the ball (nearest to it)
+typedef struct { double x, y; CInstance *best; double bd; } CarCtx;
+static int car_cb(CInstance *inst, void *vc) {
+    CarCtx *c = vc;
+    double d = hypot(rb_get_builtin_real(inst, SLOT_X) - c->x, rb_get_builtin_real(inst, SLOT_Y) - c->y);
+    if (d < c->bd) { c->bd = d; c->best = inst; }
+    return 0;
+}
+static CInstance *carrier_near(CInstance *ball, CInstance *other) {
+    CarCtx c = { rb_get_builtin_real(ball, SLOT_X), rb_get_builtin_real(ball, SLOT_Y), 0, 1e9 };
+    RValue r = rb_obj_ref(OBJ_PLAYER_OF);
+    rb_with(&r, ball, other, car_cb, &c);
+    return c.bd < 30 ? c.best : 0;
+}
+
+// Teammates contain, the player finishes: an AI defender who reaches the carrier hangs on (slowing him)
+// instead of ending the play - unless the player is out of the play, the carrier is near the goal line,
+// or they've been dragging him for a while. Returns 1 if it handled this defender.
+#define WRAP_RADIUS 26.0
+static int contain(CInstance *player, double x, double y) {
+    double bx = rb_get_builtin_real(S.ball, SLOT_X), by = rb_get_builtin_real(S.ball, SLOT_Y);
+    double d = hypot(bx - x, by - y);
+    if (d >= WRAP_RADIUS + 6) return 0;
+    CInstance *me = rb_def_controlled();
+    if (!me) return 0;
+    double ux = rb_get_builtin_real(me, SLOT_X), uy = rb_get_builtin_real(me, SLOT_Y);
+    double goal = S.fwd > 0 ? 2300 : 300, to_goal = (goal - bx) * S.fwd;
+    if (hypot(ux - bx, uy - by) > 260 || to_goal < 110 || S.wrap_frames > 70) return 0;   // safety net: tackle
+    S.wrapped = 1;
+    if (d < WRAP_RADIUS) {                                      // hang on beside him, not on top of him
+        double k = WRAP_RADIUS / (d > 0.5 ? d : 0.5);
+        double nx = bx + (x - bx) * k, ny = by + (y - by) * k;
+        if (d <= 0.5) { nx = bx - S.fwd * WRAP_RADIUS; ny = by; }
+        rb_set_builtin_real(player, SLOT_X, nx); rb_set_builtin_real(player, SLOT_Y, ny);
+    }
+    rb_set_inst_real(player, SLOT_JFORCE, 0.0);                // no lunge
+    return 1;
+}
 
 typedef struct { int n; } RoleCtx;
 static int role_cb(CInstance *inst, void *vc) {
@@ -127,6 +167,16 @@ void rb_defcall_step(CInstance *ball, CInstance *other, int cpu_offense) {
     if ((S.st == 19 || S.st == 5) && !S.t_hand && !S.t_throw) S.t_hand = S.t;
     if (S.st == 5 && S.prev_st == 3) S.t_catch = S.t;
     if (S.st == 4 || S.st == 6 || S.st == 7 || S.st == 9 || S.st == 11) S.live = 0;   // play over
+    // teammates wrapped up the carrier last frame: he drags them, losing a step each frame
+    S.wrapped_prev = S.wrapped; S.wrapped = 0;
+    if (S.live && S.st == 5 && S.wrapped_prev) {
+        S.wrap_frames++;
+        CInstance *car = carrier_near(ball, other);
+        if (car) {
+            double cx = rb_get_builtin_real(car, SLOT_X);
+            rb_set_builtin_real(car, SLOT_X, cx - S.fwd * 1.1);
+        }
+    }
 }
 
 static double dir_to(double fx, double fy, double tx, double ty) {
@@ -181,6 +231,7 @@ void rb_defcall_after_ai(CInstance *player) {
         }
         return;
     }
+    if (st == 5 && contain(player, x, y)) return;
     if (st == 19 || st == 5) {                                  // run (or a catch, but then live is 0 soon)
         double bx = rb_get_builtin_real(S.ball, SLOT_X), by = rb_get_builtin_real(S.ball, SLOT_Y);
         if (S.t_throw) {                                        // after the catch

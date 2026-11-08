@@ -48,6 +48,27 @@ static CInstance *nearest_defender(CInstance *self, CInstance *other, double x, 
     return c.best;
 }
 
+// the defender with the best angle on the carrier: closest to where he'll be in ~20 frames,
+// not already beaten (behind him)
+typedef struct { double px, py, bx, fwd; CInstance *best; double bd; } AngleCtx;
+static int angle_cb(CInstance *inst, void *vctx) {
+    AngleCtx *c = vctx;
+    double x = rb_get_builtin_real(inst, SLOT_X), y = rb_get_builtin_real(inst, SLOT_Y);
+    if (x < -9000) return 0;
+    if ((x - c->bx) * c->fwd < -20) return 0;                 // already behind the play
+    double d = hypot(x - c->px, y - c->py);
+    if (d < c->bd) { c->bd = d; c->best = inst; }
+    return 0;
+}
+static CInstance *best_angle(CInstance *self, CInstance *other, double bx, double by, double vx, double vy, double fwd, double *dist) {
+    AngleCtx c = { bx + vx * 20 + fwd * 20, by + vy * 20, bx, fwd, 0, 1e9 };
+    RValue r = rb_obj_ref(OBJ_PLAYER_DF);
+    rb_with(&r, self, other, angle_cb, &c);
+    if (!c.best) { c.best = nearest_defender(self, other, bx, by); c.bd = 0; }
+    *dist = c.bd;
+    return c.best;
+}
+
 static double dir_to(double fx, double fy, double tx, double ty) {
     double a = atan2(-(ty - fy), tx - fx) * 57.29577951308232;
     return a < 0 ? a + 360 : a;
@@ -103,11 +124,14 @@ void rb_def_step(CInstance *ball, CInstance *other, int cpu_offense, double los_
         if (st == 3 && rb_cpuqb_target(&tx, &ty)) {
             CInstance *n = nearest_defender(ball, other, tx, ty);
             if (n && n != D.ctrl) { D.ctrl = n; rb_log("defense: auto-switch to the target area"); }
-        } else if (st == 5 && D.ctrl) {
+        } else if ((st == 5 || st == 19) && D.ctrl) {           // handoff, catch or scramble: put him in on it
             double cx = rb_get_builtin_real(D.ctrl, SLOT_X), cy = rb_get_builtin_real(D.ctrl, SLOT_Y);
-            if (hypot(bx - cx, by - cy) > 120) {
-                CInstance *n = nearest_defender(ball, other, bx, by);
-                if (n && n != D.ctrl) { D.ctrl = n; rb_log("defense: auto-switch to the ball carrier"); }
+            double px = bx + D.bvx * 20 + fwd * 20, py = by + D.bvy * 20, mine = hypot(cx - px, cy - py), bd;
+            if ((cx - bx) * fwd < -20) mine += 200;                 // he's already beaten
+            CInstance *n = best_angle(ball, other, bx, by, D.bvx, D.bvy, fwd, &bd);
+            if (n && n != D.ctrl && bd + 40 < mine) {
+                D.ctrl = n; D.dive_until = D.break_until = 0;
+                rb_log("defense: auto-switch to the best angle on the carrier (%.0f vs %.0f)", bd, mine);
             }
         }
     }
