@@ -124,7 +124,7 @@ void rb_ui_side_menu(const char *title, const char *message, const char **button
         RbRect wb = MSG(RbRect)(win, S("bounds"));
         RbInsets in = MSG(RbInsets)(win, S("safeAreaInsets"));
         double W = 176, bh = 38, gap = 6, pad = 10;
-        double th = 20, mh = c.m[0] ? 78 : 0;
+        double th = 20, mh = c.m[0] ? 104 : 0;
         double H = pad + th + (mh ? mh + 4 : 0) + c.n * (bh + gap) + pad - gap;
         double x = in.left + 6, y = (wb.h - H) / 2;
         if (y < in.top + 4) y = in.top + 4;

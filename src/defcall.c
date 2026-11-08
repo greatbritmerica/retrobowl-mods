@@ -37,7 +37,8 @@ static const int MATCH[5][3] = { {  0,  0,  0 },
 #define RUSH_DEPTH   45.0        // defenders this close to the line at the snap are rushers
 
 static volatile int g_asked, g_answer, g_open;   // menu state (answer written on the main thread)
-static int g_call, g_play = -1, g_match;
+static int g_call, g_play = -1, g_match, g_disguised;
+void rb_defcall_disguise(int d) { g_disguised = d; }
 static char g_last[160];                      // last play's verdict, shown in the next menu
 static int g_rights, g_calls;
 
@@ -65,7 +66,7 @@ int rb_defcall_ready(int down, double yards, unsigned look_frames) {
         static char title[64], msg[200];
         const char *dn = down <= 1 ? "1st" : down == 2 ? "2nd" : down == 3 ? "3rd" : "4th";
         snprintf(title, sizeof title, "%s & %.0f  -  your call", dn, yards < 1 ? 1 : yards);
-        snprintf(msg, sizeof msg, "%s%sBack behind QB = run, beside = pass. Receivers split wide = deep.",
+        snprintf(msg, sizeof msg, "%s%sBack behind QB = run (Short zone). Beside = short pass (Man). Wide receivers = deep (Blitz/Deep zone).",
                  g_last, g_last[0] ? "\n" : "");
         static const char *b[4] = { "Blitz", "Man", "Short zone", "Deep zone" };
         rb_ui_side_menu(title, msg, b, 4, on_call);
@@ -82,8 +83,10 @@ void rb_defcall_snap(int is_run, int deep) {
     g_calls++; if (g_match > 0) g_rights++;
     rb_log("defcall: %s vs %s -> %s (%d/%d right reads)", CALL_NAME[g_call], PLAY_NAME[g_play],
            g_match > 0 ? "RIGHT CALL" : g_match < 0 ? "WRONG CALL" : "neutral", g_rights, g_calls);
-    snprintf(g_last, sizeof g_last, "Last: %s - %s %s (%d/%d)", PLAY_NAME[g_play], CALL_NAME[g_call],
-             g_match > 0 ? "RIGHT" : g_match < 0 ? "wrong" : "ok", g_rights, g_calls);
+    static const char *BEST[3] = { "Short zone", "Man", "Blitz/Deep zone" };
+    snprintf(g_last, sizeof g_last, "Last: %s%s - %s %s%s%s (%d/%d)", PLAY_NAME[g_play], g_disguised ? " (disguised)" : "",
+             CALL_NAME[g_call], g_match > 0 ? "RIGHT" : g_match < 0 ? "wrong" : "ok",
+             g_match > 0 ? "" : ", best: ", g_match > 0 ? "" : BEST[g_play], g_rights, g_calls);
     S.live = 1; S.t_snap = S.t; S.t_throw = S.t_hand = S.t_catch = 0; S.nd = 0; S.wrap_frames = 0; S.wrapped = 0;
 }
 
@@ -169,7 +172,7 @@ void rb_defcall_step(CInstance *ball, CInstance *other, int cpu_offense) {
     if (S.st == 4 || S.st == 6 || S.st == 7 || S.st == 9 || S.st == 11) S.live = 0;   // play over
     // teammates wrapped up the carrier last frame: he drags them, losing a step each frame
     S.wrapped_prev = S.wrapped; S.wrapped = 0;
-    if (S.live && S.st == 5 && S.wrapped_prev) {
+    if (0 && S.live && S.st == 5 && S.wrapped_prev) {
         S.wrap_frames++;
         CInstance *car = carrier_near(ball, other);
         if (car) {
@@ -231,7 +234,7 @@ void rb_defcall_after_ai(CInstance *player) {
         }
         return;
     }
-    if (st == 5 && contain(player, x, y)) return;
+    (void)contain;                                              // (wrap-up/contain removed: looked like a force field)
     if (st == 19 || st == 5) {                                  // run (or a catch, but then live is 0 soon)
         double bx = rb_get_builtin_real(S.ball, SLOT_X), by = rb_get_builtin_real(S.ball, SLOT_Y);
         if (S.t_throw) {                                        // after the catch

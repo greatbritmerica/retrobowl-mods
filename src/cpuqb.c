@@ -367,6 +367,7 @@ void rb_cpuqb_step(CInstance *ball, CInstance *other, int cpu_offense) {
         Q.deep = !Q.is_run && frand() < p_deep;
         int show_run = Q.is_run ^ (frand() < 0.20);
         int show_deep = !show_run && (Q.deep ^ (frand() < 0.15));
+        rb_defcall_disguise(show_run != Q.is_run || (!show_run && !Q.is_run && show_deep != Q.deep));
         int rbi = find_rb();
         if (rbi >= 0) {
             double side = frand() < 0.5 ? -1 : 1;
