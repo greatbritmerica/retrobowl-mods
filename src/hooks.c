@@ -145,7 +145,7 @@ static void cpu_fourth_action(CInstance *self, CInstance *other) {
 
 // ---- CPU athleticism: on Extreme the CPU's players get a burst boost every play (both sides of the ball)
 #define CPU_ACCEL_BOOST 1.35
-typedef struct { int n; double before, after; } BoostCtx;
+typedef struct { int n; double before, after, mult; } BoostCtx;
 static int boost_cb(CInstance *inst, void *vc) {
     BoostCtx *c = vc;
     static struct { CInstance *inst; double val; } seen[64]; static int ns;
@@ -153,7 +153,7 @@ static int boost_cb(CInstance *inst, void *vc) {
     for (int i = 0; i < ns; i++)                            // players kept between plays: boost only once
         if (seen[i].inst == inst && seen[i].val == a) return 0;
     if (a > 0 && a < 100) {
-        double b = a * CPU_ACCEL_BOOST;
+        double b = a * c->mult;
         rb_set_inst_real(inst, SLOT_MY_ACCEL, b);
         b = rb_get_inst_real(inst, SLOT_MY_ACCEL);
         int k = 0;
@@ -171,12 +171,12 @@ static void cpu_boost(CInstance *ball, CInstance *other, int cpu_offense) {
     if (st != 0) return;                                    // boost at the line, once per play
     done_ball = ball;
     if (rb_get_obj_real(OBJ_MASTER, SLOT_OP_DIFFICULTY) != 4) return;
-    BoostCtx c = { 0, 0, 0 };
+    BoostCtx c = { 0, 0, 0, cpu_offense ? CPU_ACCEL_BOOST : 1.0 + 0.5 * rb_dbrain_dial() };
     RValue r = rb_obj_ref(cpu_offense ? OBJ_PLAYER_OF : OBJ_PLAYER_DF);
     rb_with(&r, ball, other, boost_cb, &c);
     static int logs;
-    if (c.n && logs++ < 6) rb_log("boost: CPU %s x%.2f acceleration (%d players, avg %.3f -> %.3f)",
-                                  cpu_offense ? "offense" : "defense", CPU_ACCEL_BOOST, c.n, c.before / c.n, c.after / c.n);
+    if (c.n && logs++ < 12) rb_log("boost: CPU %s x%.2f acceleration (%d players, avg %.3f -> %.3f)",
+                                  cpu_offense ? "offense" : "defense", c.mult, c.n, c.before / c.n, c.after / c.n);
 }
 
 RValue *hook_update_ball(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {

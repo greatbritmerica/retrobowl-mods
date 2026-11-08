@@ -67,6 +67,37 @@ static double familiarity(int z) {
     return (share > 1 ? 1 : share) * exp_;
 }
 
+// ---- balance governor: steer the CPU defense toward stopping about half of the player's passes.
+// rate = recent share of the player's passes that gain yards; the dial (0.1 - 1) sets how hard the
+// defense breaks on throws, how far it reads, and (hooks.c) how much acceleration it gets.
+static double g_rate = 0.5, g_dial = 0.6;
+static int g_bal_loaded;
+static void bal_load(void) {
+    if (g_bal_loaded) return;
+    g_bal_loaded = 1;
+    const char *h = getenv("HOME"); char fp[1024]; snprintf(fp, sizeof fp, "%s/Documents/rbmod_balance.txt", h ? h : ".");
+    FILE *f = fopen(fp, "r"); if (!f) return;
+    char line[128]; double r, d;
+    if (fgets(line, sizeof line, f) && sscanf(line, "%lf %lf", &r, &d) == 2 && d >= 0.1 && d <= 1.0) { g_rate = r; g_dial = d; }
+    fclose(f);
+    rb_log("balance: loaded (player pass success %.0f%%, defense dial %.2f)", g_rate * 100, g_dial);
+}
+static void bal_save(void) {
+    const char *h = getenv("HOME"); char fp[1024]; snprintf(fp, sizeof fp, "%s/Documents/rbmod_balance.txt", h ? h : ".");
+    FILE *f = fopen(fp, "w"); if (!f) return;
+    fprintf(f, "%.4f %.4f\n", g_rate, g_dial); fclose(f);
+}
+double rb_dbrain_dial(void) { bal_load(); return g_dial; }
+static void bal_pass(int success) {
+    bal_load();
+    g_rate += ((success ? 1.0 : 0.0) - g_rate) * 0.15;
+    g_dial += (g_rate - 0.5) * 0.25;                         // completing more than half -> tighten
+    if (g_dial < 0.1) g_dial = 0.1;
+    if (g_dial > 1.0) g_dial = 1.0;
+    rb_log("balance: player pass %s -> success %.0f%%, defense dial %.2f", success ? "worked" : "stopped", g_rate * 100, g_dial);
+    bal_save();
+}
+
 static void learn_pass(int z, double yds) {
     for (int i = 0; i < 9; i++) B.zone[i] *= 0.95;           // recent throws count most
     B.zone[z] += 0.05;
@@ -159,6 +190,7 @@ void rb_dlearn_step(CInstance *ball, CInstance *other, int human_offense) {
         P.scored = 1;
         double yds = (st == 7 || st == 9) ? 0 : (bx - P.los) * P.fwd / PX_PER_YD;
         if (P.kind == 1 && P.zone >= 0) learn_pass(P.zone, st == 9 ? -10 : yds);
+        if (P.kind == 1 && P.extreme) bal_pass((st == 4 || st == 6) && yds > 0);
         else if (P.kind == 2) learn_run(yds);
     }
     P.prev_st = st;
@@ -179,8 +211,9 @@ void rb_dlearn_after_ai(CInstance *player) {
     if (rb_get_inst_real(player, SLOT_OFFENSE) > 0.5) return;           // defenders only
     if (st == 3 && P.kind == 1 && P.zone >= 0) {                       // ball in the air (landing known)
         double f = familiarity(P.zone);
-        double radius = 80 + 110 * f;                                   // reads from further away
-        unsigned delay = (unsigned)(12 - 8 * f);                        // and sooner
+        double D = rb_dbrain_dial();                                    // balance: aim for ~50% stopped
+        double radius = (80 + 110 * f) * (0.3 + 0.9 * D);              // reads from further away
+        unsigned delay = (unsigned)((12 - 8 * f) * (1.6 - D));          // and sooner
         if (P.rcv && P.t - P.t_throw >= delay && hypot(P.lx - x, P.ly - y) < radius) {
             double rx = rb_get_builtin_real(P.rcv, SLOT_X), ry = rb_get_builtin_real(P.rcv, SLOT_Y);
             if (rx > -9000) {                                           // jump the route: go to the receiver
@@ -189,7 +222,7 @@ void rb_dlearn_after_ai(CInstance *player) {
             }
         }
     } else if (st == 5 && P.kind == 2) {                                // run: only if the player lives off it
-        double a = run_alert();
+        double a = run_alert() * (0.4 + 0.8 * rb_dbrain_dial());
         if (a <= 0) return;
         double bx = rb_get_builtin_real(P.ball, SLOT_X), by = rb_get_builtin_real(P.ball, SLOT_Y);
         if (hypot(bx - x, by - y) < 60 + 100 * a) {
