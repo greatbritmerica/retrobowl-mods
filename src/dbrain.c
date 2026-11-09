@@ -244,7 +244,7 @@ static void decide_read(void) {
     if (f > 0.85) f = 0.85;
     double p = (0.12 + 0.33 * f) * (1.0 - P.late);
     P.undercut = arc4random_uniform(1000) < (unsigned)(p * 1000);
-    P.tip = arc4random_uniform(100) < 70;
+    P.tip = arc4random_uniform(100) < 40;                               // (70 gave 11 batted balls in 37 throws: too many)
     rb_log("dbrain: read on this throw - %s (pick chance %.0f%%, familiarity %.2f%s)",
            P.undercut ? "UNDERCUT, a pick is on" : P.tip ? "no pick: a defender in the way bats it down" : "no pick: a defender in the way misses it",
            p * 100, f, P.late > 0 ? ", late from play action" : "");
@@ -266,10 +266,11 @@ int rb_dbrain_ball_contact(CInstance *player, CInstance *other) {
     double trav = hypot(bx - P.bx0, by - P.by0);
     if (trav < 50) return 0;                                            // at the line: the game's own batted-ball rules
     if (P.zone >= 0 && trav < 0.4 * hypot(P.lx - P.bx0, P.ly - P.by0)) return 0;
+    int at_catch = P.zone < 0 || trav >= 0.65 * hypot(P.lx - P.bx0, P.ly - P.by0);   // breakups happen at the catch, not at linebacker depth
     decide_read();
     if (P.undercut) return 0;                                           // this one can be picked: the game decides
     double h = rb_get_inst_real(P.ball, SLOT_HEIGHT);
-    if (P.tip && !P.tipped && h <= 50) {                                // within a leaping defender's reach (the game lets a jumping player catch up to 60)
+    if (P.tip && !P.tipped && at_catch && h <= 45) {                                // within a leaping defender's reach (the game lets a jumping player catch up to 60)
         P.tipped = 1;
         RValue no = {0}; no.kind = RV_BOOL;
         RValue *av[1] = { &no };
