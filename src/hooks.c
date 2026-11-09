@@ -5,6 +5,7 @@
 #include "input.h"
 #include "cpuqb.h"
 #include "defcall.h"
+#include "offtools.h"
 #include "defense.h"
 #include "dbrain.h"
 #include "camera3d.h"
@@ -188,6 +189,7 @@ RValue *hook_update_ball(CInstance *self, CInstance *other, RValue *res, int arg
     if (human >= 0 && poss >= 0) cpu_boost(self, other, cpu_offense);
     rb_cpuqb_step(self, other, cpu_offense);
     rb_defcall_step(self, other, cpu_offense);
+    rb_off_step(self, other, human >= 0 && poss >= 0 && !cpu_offense);
     double los, fwd, qbx, qby;
     rb_cpuqb_info(&los, &fwd, &qbx, &qby);
     rb_def_step(self, other, cpu_offense, los, fwd, qbx, qby);
@@ -281,6 +283,7 @@ RValue *hook_get_destination(CInstance *self, CInstance *other, RValue *res, int
     rb_defcall_after_ai(self);           // the call shapes the AI defenders...
     rb_def_after_ai(self);               // ...the player's own man stays his
     rb_dlearn_after_ai(self);
+    rb_off_after_ai(self);               // play action / pump fake (player's offense)
     return r;
 }
 

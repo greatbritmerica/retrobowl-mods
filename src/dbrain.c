@@ -242,3 +242,5 @@ void rb_dlearn_after_ai(CInstance *player) {
         }
     }
 }
+
+double rb_dbrain_run_share(void) { load(); return B.run; }

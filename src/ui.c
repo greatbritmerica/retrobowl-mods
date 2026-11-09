@@ -94,7 +94,6 @@ void rb_ui_choice_n(const char *title, const char *message, const char **buttons
 // A small panel down the left edge so the formation stays visible. cb(i) is 1-based.
 typedef struct { double x, y, w, h; } RbRect;
 typedef struct { double top, left, bottom, right; } RbInsets;
-static id g_side;
 
 static id make_label(const char *text, double size, double x, double y, double w, double h, int bold) {
     id l = MSG(id, RbRect)(MSG(id)(C("UILabel"), S("alloc")), S("initWithFrame:"), (RbRect){ x, y, w, h });
@@ -107,40 +106,51 @@ static id make_label(const char *text, double size, double x, double y, double w
     return l;
 }
 
-void rb_ui_side_menu(const char *title, const char *message, const char **buttons, int n, void (*cb)(int)) {
-    if (n > 6) n = 6;
-    char t[96], m[240], bt[6][32];
-    snprintf(t, sizeof t, "%s", title ? title : "");
-    snprintf(m, sizeof m, "%s", message ? message : "");
-    for (int i = 0; i < n; i++) snprintf(bt[i], sizeof bt[i], "%s", buttons[i]);
-    struct { char t[96], m[240], b[6][32]; int n; } c;
-    memcpy(c.t, t, sizeof t); memcpy(c.m, m, sizeof m); memcpy(c.b, bt, sizeof bt); c.n = n;
+// Compact panels docked to a screen edge (several can exist, one per id). Tapping a button closes the
+// panel and calls cb(i), 1-based. side: 0 = left edge, 1 = right edge.
+static id g_panel[RB_UI_PANELS];
+
+void rb_ui_panel_close(int pid) {
+    if (pid < 0 || pid >= RB_UI_PANELS) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (g_panel[pid]) { MSG(void)(g_panel[pid], S("removeFromSuperview")); g_panel[pid] = 0; }
+    });
+}
+
+void rb_ui_panel(int pid, int side, double width, const char *title, const char *message,
+                 const char **buttons, int n, void (*cb)(int)) {
+    if (pid < 0 || pid >= RB_UI_PANELS) return;
+    if (n > 7) n = 7;
+    struct { char t[96], m[240], b[7][40]; int n; } c;
+    memset(&c, 0, sizeof c);
+    snprintf(c.t, sizeof c.t, "%s", title ? title : "");
+    snprintf(c.m, sizeof c.m, "%s", message ? message : "");
+    for (int i = 0; i < n; i++) snprintf(c.b[i], sizeof c.b[i], "%s", buttons[i]);
+    c.n = n;
     dispatch_async(dispatch_get_main_queue(), ^{
         id app = MSG(id)(C("UIApplication"), S("sharedApplication"));
         id win = app ? MSG(id)(app, S("keyWindow")) : 0;
         if (!win) { id ws = app ? MSG(id)(app, S("windows")) : 0; win = ws ? MSG(id)(ws, S("firstObject")) : 0; }
         if (!win) { rb_log("ui: no window"); cb(0); return; }
-        if (g_side) { MSG(void)(g_side, S("removeFromSuperview")); g_side = 0; }
+        if (g_panel[pid]) { MSG(void)(g_panel[pid], S("removeFromSuperview")); g_panel[pid] = 0; }
         RbRect wb = MSG(RbRect)(win, S("bounds"));
         RbInsets in = MSG(RbInsets)(win, S("safeAreaInsets"));
-        double W = 176, bh = 38, gap = 6, pad = 10;
-        double th = 20, mh = c.m[0] ? 104 : 0;
+        double W = width, bh = 38, gap = 6, pad = 10;
+        double th = c.t[0] ? 20 : 0, mh = c.m[0] ? (W > 150 ? 104 : 60) : 0;
         double H = pad + th + (mh ? mh + 4 : 0) + c.n * (bh + gap) + pad - gap;
-        double x = in.left + 6, y = (wb.h - H) / 2;
+        double x = side ? wb.w - in.right - 6 - W : in.left + 6, y = (wb.h - H) / 2;
         if (y < in.top + 4) y = in.top + 4;
         id panel = MSG(id, RbRect)(MSG(id)(C("UIView"), S("alloc")), S("initWithFrame:"), (RbRect){ x, y, W, H });
         MSG(void, id)(panel, S("setBackgroundColor:"), MSG(id, double, double)(C("UIColor"), S("colorWithWhite:alpha:"), 0.0, 0.62));
-        id layer = MSG(id)(panel, S("layer"));
-        MSG(void, double)(layer, S("setCornerRadius:"), 12.0);
+        MSG(void, double)(MSG(id)(panel, S("layer")), S("setCornerRadius:"), 12.0);
         double cy = pad;
-        MSG(void, id)(panel, S("addSubview:"), make_label(c.t, 15, pad, cy, W - 2 * pad, th, 1));
-        cy += th;
+        if (th) { MSG(void, id)(panel, S("addSubview:"), make_label(c.t, 15, pad, cy, W - 2 * pad, th, 1)); cy += th; }
         if (mh) { MSG(void, id)(panel, S("addSubview:"), make_label(c.m, 11, pad, cy, W - 2 * pad, mh, 0)); cy += mh + 4; }
         for (int i = 0; i < c.n; i++) {
             int idx = i + 1;
             id act = MSG(id, id, id, id, void (^)(id))(C("UIAction"), S("actionWithTitle:image:identifier:handler:"),
                          nsstr(c.b[i]), 0, 0, ^(id a) {
-                             if (g_side) { MSG(void)(g_side, S("removeFromSuperview")); g_side = 0; }
+                             if (g_panel[pid]) { MSG(void)(g_panel[pid], S("removeFromSuperview")); g_panel[pid] = 0; }
                              cb(idx);
                          });
             id btn = MSG(id, long, id)(C("UIButton"), S("buttonWithType:primaryAction:"), 1, act);
@@ -152,6 +162,10 @@ void rb_ui_side_menu(const char *title, const char *message, const char **button
             cy += bh + gap;
         }
         MSG(void, id)(win, S("addSubview:"), panel);
-        g_side = panel;
+        g_panel[pid] = panel;
     });
+}
+
+void rb_ui_side_menu(const char *title, const char *message, const char **buttons, int n, void (*cb)(int)) {
+    rb_ui_panel(RB_PANEL_DEFCALL, 0, 176, title, message, buttons, n, cb);
 }
