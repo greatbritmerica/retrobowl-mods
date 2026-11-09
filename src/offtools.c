@@ -306,4 +306,5 @@ void rb_off_after_ai(CInstance *player) {
     if (O.pa_live && since < PA_FRAMES) steer(player, x, y, O.los + O.fwd * 15, y, O.bite);   // step up for the run
 }
 
+double rb_off_pa_bite(void) { return O.ball ? O.bite : 0; }
 int rb_off_scrambled(void) { return O.ball && O.scrambled; }

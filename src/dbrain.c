@@ -5,6 +5,8 @@
 #include "rb.h"
 #include "sys.h"
 #include "dbrain.h"
+#include "offtools.h"
+#include <stdlib.h>
 
 #define DRAG_DECAY 0.986
 #define AIR_K      8.75
@@ -20,6 +22,8 @@ static struct {
     double los, fwd, qby, prev_st;
     double lx, ly, bx0, by0, down, togo; int zone, scored, pend; unsigned t, t_throw;
     CInstance *rcv;                 // intended receiver (offense player nearest the landing spot)
+    int undercut;                       // this throw: the reader gets in front of it (pick chance) vs arrives at the catch
+    double late;                        // play-action bite: the secondary reads the throw late
     CInstance *jumper;                  // the one defender reading the throw this play
 } P;
 
@@ -204,6 +208,7 @@ void rb_dlearn_step(CInstance *ball, CInstance *other, int human_offense) {
     if (P.prev_st == 2 && st == 3) {                            // thrown: predict where it lands
         P.bx0 = bx; P.by0 = by;
         P.kind = 1; P.t_throw = P.t; P.pend = 1; P.zone = -1; P.rcv = 0;
+        P.late = rb_off_pa_bite(); P.undercut = -1; P.jumper = 0;
     } else if (st == 19 || (P.prev_st == 2 && st == 5)) P.kind = 2;         // handoff or QB run
     else if (!P.scored && (st == 4 || st == 6 || st == 7 || st == 9)) {
         P.scored = 1;
@@ -241,6 +246,18 @@ void rb_dlearn_after_ai(CInstance *player) {
         double D = rb_dbrain_pass_dial();                               // balance: aim for ~50% of passes stopped
         double radius = (80 + 110 * f) * (0.3 + 0.9 * D);              // reads from further away
         unsigned delay = (unsigned)((12 - 8 * f) * (1.6 - D));          // and sooner
+        // A defense that stepped up for the run fake is late and short on the throw behind it - for the
+        // whole play, not just the half second of the fake.
+        radius *= 1.0 - 0.55 * P.late;
+        delay += (unsigned)(34 * P.late);
+        if (P.undercut < 0) {
+            // Most reads end with the defender arriving AT the catch (a hit, a breakup, a short gain).
+            // Getting in front of the ball for a pick takes a well-known route and some luck.
+            double p = (0.12 + 0.33 * f) * (1.0 - P.late);
+            P.undercut = arc4random_uniform(1000) < (unsigned)(p * 1000);
+            rb_log("dbrain: read on this throw - %s (pick chance %.0f%%, familiarity %.2f%s)",
+                   P.undercut ? "UNDERCUT" : "closing on the catch", p * 100, f, P.late > 0 ? ", late from play action" : "");
+        }
         double dist = hypot(P.lx - x, P.ly - y);
         if (P.rcv && P.t - P.t_throw >= delay && dist < radius) {
             // Only one defender reads the throw (the closest to where it lands). A whole secondary
@@ -252,7 +269,12 @@ void rb_dlearn_after_ai(CInstance *player) {
             P.jumper = player;
             double rx = rb_get_builtin_real(P.rcv, SLOT_X), ry = rb_get_builtin_real(P.rcv, SLOT_Y);
             if (rx > -9000) {                                           // jump the route: go to the receiver
-                rb_set_inst_real(player, SLOT_JDIR, dir_to(x, y, rx, ry));
+                double tx = rx, ty = ry;
+                if (!P.undercut) {                                      // the far side of the receiver: ball gets there first
+                    double fx = P.lx - P.bx0, fy = P.ly - P.by0, fl = hypot(fx, fy);
+                    if (fl > 1) { tx += fx / fl * 16; ty += fy / fl * 16; }
+                }
+                rb_set_inst_real(player, SLOT_JDIR, dir_to(x, y, tx, ty));
                 rb_set_inst_real(player, SLOT_JFORCE, 1.0);
             }
         }
