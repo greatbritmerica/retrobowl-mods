@@ -20,6 +20,7 @@ static struct {
     double los, fwd, qby, prev_st;
     double lx, ly, bx0, by0, down, togo; int zone, scored, pend; unsigned t, t_throw;
     CInstance *rcv;                 // intended receiver (offense player nearest the landing spot)
+    CInstance *jumper;                  // the one defender reading the throw this play
 } P;
 
 static void path(char *b, int n) { const char *h = getenv("HOME"); snprintf(b, n, "%s/Documents/rbmod_dbrain.txt", h ? h : "."); }
@@ -240,7 +241,15 @@ void rb_dlearn_after_ai(CInstance *player) {
         double D = rb_dbrain_pass_dial();                               // balance: aim for ~50% of passes stopped
         double radius = (80 + 110 * f) * (0.3 + 0.9 * D);              // reads from further away
         unsigned delay = (unsigned)((12 - 8 * f) * (1.6 - D));          // and sooner
-        if (P.rcv && P.t - P.t_throw >= delay && hypot(P.lx - x, P.ly - y) < radius) {
+        double dist = hypot(P.lx - x, P.ly - y);
+        if (P.rcv && P.t - P.t_throw >= delay && dist < radius) {
+            // Only one defender reads the throw (the closest to where it lands). A whole secondary
+            // converging on the catch turned contested balls into interceptions far too often.
+            if (P.jumper && P.jumper != player) {
+                double jx = rb_get_builtin_real(P.jumper, SLOT_X), jy = rb_get_builtin_real(P.jumper, SLOT_Y);
+                if (jx > -9000 && hypot(P.lx - jx, P.ly - jy) <= dist) return;
+            }
+            P.jumper = player;
             double rx = rb_get_builtin_real(P.rcv, SLOT_X), ry = rb_get_builtin_real(P.rcv, SLOT_Y);
             if (rx > -9000) {                                           // jump the route: go to the receiver
                 rb_set_inst_real(player, SLOT_JDIR, dir_to(x, y, rx, ry));

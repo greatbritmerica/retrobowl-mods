@@ -67,7 +67,7 @@ SLOT_TACKLING      = 0x100faf788
 SLOT_TACKLE_TIME   = 0x100faf768
 YY_COMPARE         = 0x100b68d3c   # int (RValue* a, RValue* b, int flag), d0 = epsilon -> 0 if equal
 EPSILON_VA         = 0x101050828
-SACK_PCT           = 70
+SACK_PCT           = 45
 HIT_RADIUS         = 16            # defender within this distance of the QB at release = 'hit'
 SLOT_ANIM          = 0x100fa1a88
 SLOT_CURRENT_TIME  = 0x100fb0898
