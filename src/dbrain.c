@@ -6,7 +6,6 @@
 #include "sys.h"
 #include "dbrain.h"
 #include "offtools.h"
-#include <stdlib.h>
 
 #define DRAG_DECAY 0.986
 #define AIR_K      8.75
