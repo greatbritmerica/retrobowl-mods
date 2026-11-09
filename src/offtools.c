@@ -229,7 +229,7 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
         rb_with(&d, ball, other, df_cb, 0);
         for (int i = 0; i < O.ndf; i++) O.rusher[i] = fabs(O.dfx[i] - O.los) < RUSH_DEPTH;
         if (O.pa_on && !O.run_play) {
-            double rs = rb_dbrain_run_share(), f = (rs - 0.2) / 0.4;
+            double rs = rb_dbrain_run_share(), f = (rs - 0.15) / 0.30;   // ~30% runs already sells it well
             if (f < 0) f = 0;
             if (f > 1) f = 1;
             O.bite = 0.25 + 0.75 * f;

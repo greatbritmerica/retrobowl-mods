@@ -76,7 +76,7 @@ static double familiarity(int z) {
 static double g_rate[2] = { 0.5, 0.5 }, g_dial[2] = { 0.5, 0.6 };   // [0] pass, [1] run
 static int g_bal_loaded;
 static void bal_path(char *fp, size_t n) {
-    const char *h = getenv("HOME"); snprintf(fp, n, "%s/Documents/rbmod_balance3.txt", h ? h : ".");
+    const char *h = getenv("HOME"); snprintf(fp, n, "%s/Documents/rbmod_balance4.txt", h ? h : ".");
 }
 static void bal_load(void) {
     if (g_bal_loaded) return;
@@ -100,10 +100,14 @@ double rb_dbrain_dial(void)      { bal_load(); return (g_dial[0] + g_dial[1]) / 
 static void bal_play(int success, const char *kind, double yds, double down, double togo) {
     bal_load();
     int k = kind[0] == 'r';
-    g_rate[k] += ((success ? 1.0 : 0.0) - g_rate[k]) * 0.15;
-    g_dial[k] += (g_rate[k] - 0.5) * 0.25;                  // working more than half the time -> tighten
-    if (g_dial[k] < 0.1) g_dial[k] = 0.1;
-    if (g_dial[k] > 1.0) g_dial[k] = 1.0;
+    // The dial follows the recent success rate directly (no running total), so it can't wind itself up
+    // to the max on a hot streak and stay there: 50% -> middle, each 10% above/below moves it 0.12,
+    // and it never reaches the extremes (0.25 - 0.85).
+    g_rate[k] += ((success ? 1.0 : 0.0) - g_rate[k]) * 0.12;
+    double target = 0.55 + (g_rate[k] - 0.5) * 1.2;
+    if (target < 0.25) target = 0.25;
+    if (target > 0.85) target = 0.85;
+    g_dial[k] += (target - g_dial[k]) * 0.35;
     rb_log("balance: player %s %.1f yds on %s & %.0f %s -> %s success %.0f%%, %s dial %.2f", kind, yds,
            down <= 1 ? "1st" : down == 2 ? "2nd" : down == 3 ? "3rd" : "4th", togo,
            success ? "worked" : "stopped", kind, g_rate[k] * 100, kind, g_dial[k]);
