@@ -21,6 +21,7 @@ static struct {
     double los, fwd, qby, prev_st;
     double lx, ly, bx0, by0, down, togo; int zone, scored, pend; unsigned t, t_throw;
     CInstance *rcv;                 // intended receiver (offense player nearest the landing spot)
+    int tip, tipped, whiff_logged;      // not an undercut: the defender in the way bats it down (or misses it)
     int undercut;                       // this throw: the reader gets in front of it (pick chance) vs arrives at the catch
     double late;                        // play-action bite: the secondary reads the throw late
     CInstance *jumper;                  // the one defender reading the throw this play
@@ -207,7 +208,7 @@ void rb_dlearn_step(CInstance *ball, CInstance *other, int human_offense) {
     if (P.prev_st == 2 && st == 3) {                            // thrown: predict where it lands
         P.bx0 = bx; P.by0 = by;
         P.kind = 1; P.t_throw = P.t; P.pend = 1; P.zone = -1; P.rcv = 0;
-        P.late = rb_off_pa_bite(); P.undercut = -1; P.jumper = 0;
+        P.late = rb_off_pa_bite(); P.undercut = -1; P.jumper = 0; P.tip = P.tipped = P.whiff_logged = 0;
     } else if (st == 19 || (P.prev_st == 2 && st == 5)) P.kind = 2;         // handoff or QB run
     else if (!P.scored && (st == 4 || st == 6 || st == 7 || st == 9)) {
         P.scored = 1;
@@ -231,6 +232,55 @@ static double dir_to(double fx, double fy, double tx, double ty) {
     return a < 0 ? a + 360 : a;
 }
 
+#define SLOT_BALLDIST   0x100fa1d78ULL     // player: distance to the ball (the game's own catch check uses <= 20)
+#define SLOT_HEIGHT     0x100fa5c18ULL     // ball: height off the ground
+#define VA_S_DROP_BALL  0x100395780ULL     // gml_Script_s_drop_ball(false), run as the player: the game's own tipped pass
+
+// One decision per throw. Most reads end with the defender arriving AT the catch (a hit, a breakup, a
+// short gain); getting in front of the ball for a pick takes a well-known route and some luck.
+static void decide_read(void) {
+    if (P.undercut >= 0) return;
+    double f = P.zone >= 0 ? familiarity(P.zone) : 0;
+    if (f > 0.85) f = 0.85;
+    double p = (0.12 + 0.33 * f) * (1.0 - P.late);
+    P.undercut = arc4random_uniform(1000) < (unsigned)(p * 1000);
+    P.tip = arc4random_uniform(100) < 70;
+    rb_log("dbrain: read on this throw - %s (pick chance %.0f%%, familiarity %.2f%s)",
+           P.undercut ? "UNDERCUT, a pick is on" : P.tip ? "no pick: a defender in the way bats it down" : "no pick: a defender in the way misses it",
+           p * 100, f, P.late > 0 ? ", late from play action" : "");
+}
+
+// Before the game's own ball-contact check runs for a player. The base game hands any defender who is
+// in the ball's path the interception; here that only happens on the throws decide_read() gave to the
+// defense. On the rest the defender tips it (the game's own tipped-pass routine) or just misses.
+// Returns 1 when the game's check must be skipped for this player this frame.
+int rb_dbrain_ball_contact(CInstance *player, CInstance *other) {
+    if (!P.ball || !P.extreme || P.kind != 1) return 0;
+    if (rb_get_inst_real(P.ball, SLOT_STATE) != 3) return 0;
+    if (rb_get_inst_real(player, SLOT_OFFENSE) > 0.5) return 0;        // receivers: untouched
+    if (rb_get_obj_real(OBJ_CONTROLLER, SLOT_KICKING) > 0.5) return 0;  // field goals and punts: untouched
+    if (rb_get_inst_real(player, SLOT_BALLDIST) > 20) return 0;         // not in reach: the game does nothing either
+    double bx = rb_get_builtin_real(P.ball, SLOT_X), by = rb_get_builtin_real(P.ball, SLOT_Y);
+    double trav = hypot(bx - P.bx0, by - P.by0);
+    if (trav < 50) return 0;                                            // at the line: the game's own batted-ball rules
+    if (P.zone >= 0 && trav < 0.4 * hypot(P.lx - P.bx0, P.ly - P.by0)) return 0;
+    decide_read();
+    if (P.undercut) return 0;                                           // this one can be picked: the game decides
+    double h = rb_get_inst_real(P.ball, SLOT_HEIGHT);
+    if (P.tip && !P.tipped && h <= 20) {
+        P.tipped = 1;
+        RValue no = {0}; no.kind = RV_BOOL;
+        RValue *av[1] = { &no };
+        RValue res = {0}; res.kind = RV_UNDEFINED;
+        ((GMLScript)RB(VA_S_DROP_BALL))(player, other, &res, 1, av);
+        rb_log("dbrain: pass batted down by the defender in its path (ball height %.0f, %.0f px downfield)", h, trav);
+    } else if (!P.tipped && !P.whiff_logged) {
+        P.whiff_logged = 1;
+        rb_log("dbrain: defender in the path doesn't get a hand on it (ball height %.0f)", h);
+    }
+    return 1;
+}
+
 // after the game's AI has steered a defender on the player's drive
 void rb_dlearn_after_ai(CInstance *player) {
     if (!P.ball || !P.extreme || !P.fwd) return;
@@ -249,14 +299,7 @@ void rb_dlearn_after_ai(CInstance *player) {
         // whole play, not just the half second of the fake.
         radius *= 1.0 - 0.55 * P.late;
         delay += (unsigned)(34 * P.late);
-        if (P.undercut < 0) {
-            // Most reads end with the defender arriving AT the catch (a hit, a breakup, a short gain).
-            // Getting in front of the ball for a pick takes a well-known route and some luck.
-            double p = (0.12 + 0.33 * f) * (1.0 - P.late);
-            P.undercut = arc4random_uniform(1000) < (unsigned)(p * 1000);
-            rb_log("dbrain: read on this throw - %s (pick chance %.0f%%, familiarity %.2f%s)",
-                   P.undercut ? "UNDERCUT" : "closing on the catch", p * 100, f, P.late > 0 ? ", late from play action" : "");
-        }
+        decide_read();
         double dist = hypot(P.lx - x, P.ly - y);
         if (P.rcv && P.t - P.t_throw >= delay && dist < radius) {
             // Only one defender reads the throw (the closest to where it lands). A whole secondary

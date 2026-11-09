@@ -47,7 +47,22 @@ static struct {
     CInstance *rcv[6]; double rcv_y[6]; int nrcv, pick;
     char note[96];
     CInstance *df[16]; double dfx[16]; int ndf, rusher[16];
+    CInstance *ol[8]; int nol;                                    // interior linemen (protection calls)
+    int prot, prot_frames, prot_noted;                            // this play's protection, how long it held someone up
 } O;
+
+// Protection call. It stays as set from play to play (shown on the button) until changed.
+//   max    - the back stays in and picks up the free rusher closest to the QB (one fewer route)
+//   slide  - the line shades up or down the screen: rushers on that side are held up longer and the
+//            free linemen help there, so the other side is where pressure (and your escape) comes from
+enum { PROT_NORMAL, PROT_MAX, PROT_UP, PROT_DOWN, PROT_N };
+static const char *PROT_BTN[PROT_N] = { "Protect: normal", "Protect: MAX", "Protect: slide up", "Protect: slide down" };
+static const char *PROT_NAME[PROT_N] = { "Normal", "Max protect", "Slide up", "Slide down" };
+static int g_prot;
+static char g_last_prot[96];                                      // shown before the next snap
+#define BLOCK_REACH   17.0        // blocker and rusher this close: engaged
+#define MAX_HOLD      0.30        // rusher's drive while the back has him
+#define SLIDE_HOLD    0.50        // rusher's drive against the slid line
 
 // UI callbacks arrive on the main thread between frames; the step acts on them
 static volatile int g_ev_presnap, g_ev_rcv, g_ev_route, g_ev_pump;
@@ -59,10 +74,13 @@ static void cb_route(int i)   { g_ev_route = i ? i : -1; }
 static void cb_pump(int i)    { g_ev_pump = i ? 1 : -1; }
 
 static void show_presnap(void) {
-    const char *b[2] = { O.pa_on ? "Play action: ON" : "Play action: off", "Hot route" };
-    char msg[200];
-    snprintf(msg, sizeof msg, "%s%s%s", O.note, O.note[0] && g_last_pa[0] ? "\n" : "", g_last_pa);
-    rb_ui_panel(RB_PANEL_PRESNAP, RB_SIDE_LEFT, 150, "", msg, b, 2, cb_presnap);
+    const char *b[3] = { O.pa_on ? "Play action: ON" : "Play action: off", "Hot route", PROT_BTN[g_prot] };
+    char msg[300]; int n = 0;
+    msg[0] = 0;
+    if (O.note[0]) n += snprintf(msg + n, sizeof msg - n, "%s", O.note);
+    if (g_last_pa[0]) n += snprintf(msg + n, sizeof msg - n, "%s%s", n ? "\n" : "", g_last_pa);
+    if (g_last_prot[0]) n += snprintf(msg + n, sizeof msg - n, "%s%s", n ? "\n" : "", g_last_prot);
+    rb_ui_panel(RB_PANEL_PRESNAP, RB_SIDE_LEFT, 164, "", msg, b, 3, cb_presnap);
     O.presnap_shown = 1;
 }
 
@@ -77,6 +95,14 @@ static int near_cb(CInstance *inst, void *vc) {
 typedef struct { double sx; int n; } MeanCtx;
 static int qb_cb(CInstance *inst, void *ctx) { *(CInstance **)ctx = inst; return 1; }
 static int mean_cb(CInstance *inst, void *vc) { MeanCtx *m = vc; m->sx += rb_get_builtin_real(inst, SLOT_X); m->n++; return 0; }
+
+static int ol_cb(CInstance *inst, void *vc) {
+    (void)vc;
+    if (O.nol >= 8 || inst == O.qb || inst == O.rb) return 0;
+    double x = rb_get_builtin_real(inst, SLOT_X), y = rb_get_builtin_real(inst, SLOT_Y);
+    if (fabs(x - O.los) < 30 && fabs(y - O.qby) < 55) O.ol[O.nol++] = inst;
+    return 0;
+}
 
 static int df_cb(CInstance *inst, void *vc) {
     (void)vc;
@@ -200,6 +226,7 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
             int e = g_ev_presnap; g_ev_presnap = 0;
             if (e == 1) { O.pa_on = !O.pa_on; rb_log("offtools: play action %s", O.pa_on ? "on" : "off"); show_presnap(); }
             else if (e == 2) open_receivers(ball, other);
+            else if (e == 3) { g_prot = (g_prot + 1) % PROT_N; rb_log("offtools: protection set to %s", PROT_NAME[g_prot]); show_presnap(); }
             else show_presnap();
         }
         if (g_ev_rcv) {
@@ -232,6 +259,15 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
         RValue d = rb_obj_ref(OBJ_PLAYER_DF);
         rb_with(&d, ball, other, df_cb, 0);
         for (int i = 0; i < O.ndf; i++) O.rusher[i] = fabs(O.dfx[i] - O.los) < RUSH_DEPTH;
+        O.prot = O.run_play ? PROT_NORMAL : g_prot;
+        g_last_prot[0] = 0;
+        if (O.prot) {
+            O.nol = 0;
+            RValue of = rb_obj_ref(OBJ_PLAYER_OF);
+            rb_with(&of, ball, other, ol_cb, 0);
+            if (O.prot == PROT_MAX && !O.rb) O.prot = PROT_NORMAL;      // empty backfield: nobody to keep in
+            rb_log("offtools: protection %s - %d linemen%s", PROT_NAME[O.prot], O.nol, O.prot == PROT_MAX ? ", back stays in" : "");
+        }
         if (O.pa_on && !O.run_play) {
             double rs = rb_dbrain_run_share(), f = (rs - 0.15) / 0.30;   // ~30% runs already sells it well
             if (f < 0) f = 0;
@@ -245,6 +281,16 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
     }
     if (O.pa_live && O.t - O.t_snap >= PA_FRAMES) O.pa_live = 0;
     if (st == 3 || st == 5 || st == 19) O.pa_live = 0;              // ball's out or someone has it
+    if (O.prot && !O.prot_noted && (st == 3 || st == 5 || st == 11)) { // how the protection did, for the next huddle
+        O.prot_noted = 1;
+        int held = O.prot_frames > 8;
+        if (O.prot == PROT_MAX)
+            snprintf(g_last_prot, sizeof g_last_prot, held ? "Max protect: your back picked up a rusher" : "Max protect: no free rusher came");
+        else
+            snprintf(g_last_prot, sizeof g_last_prot, held ? "%s: that side held" : "%s: the rush came from the other side", PROT_NAME[O.prot]);
+        rb_log("offtools: %s%s (rushers held for %d frames, %.1f s to %s)", g_last_prot, st == 11 ? " - sacked anyway" : "",
+               O.prot_frames, (O.t - O.t_snap) / 60.0, st == 3 ? "throw" : st == 5 ? "scramble" : "sack");
+    }
 
     // pump fake while aiming
     if (st == 2 && O.pumps < MAX_PUMPS) {
@@ -286,6 +332,65 @@ static void steer(CInstance *p, double x, double y, double tx, double ty, double
     rb_set_inst_real(p, SLOT_JFORCE, force);
 }
 
+// Protection, while the QB is in the pocket. Blocks are bodies meeting (the game's own collisions); on
+// top of that a rusher who is engaged with the kept-in back, or with the slid line, drives at part
+// strength for as long as they are in contact. Returns 1 when this player was steered.
+static int protect(CInstance *player, double x, double y, int is_def) {
+    double qx = rb_get_builtin_real(O.qb, SLOT_X), qy = rb_get_builtin_real(O.qb, SLOT_Y);
+    if (qx < -9000) return 0;
+    double side = O.prot == PROT_UP ? -1 : 1;                           // screen y grows downward
+    if (is_def) {
+        double hold = 1.0;
+        if (O.prot == PROT_MAX) {
+            if (O.rb && hypot(rb_get_builtin_real(O.rb, SLOT_X) - x, rb_get_builtin_real(O.rb, SLOT_Y) - y) < BLOCK_REACH) hold = MAX_HOLD;
+        } else if ((y - qy) * side > -8) {                              // on the slide side (or right up the middle)
+            for (int k = 0; k < O.nol; k++)
+                if (hypot(rb_get_builtin_real(O.ol[k], SLOT_X) - x, rb_get_builtin_real(O.ol[k], SLOT_Y) - y) < BLOCK_REACH) { hold = SLIDE_HOLD; break; }
+        }
+        if (hold < 1.0) {
+            double jf = rb_get_inst_real(player, SLOT_JFORCE);            // (a cap, so it can't compound frame to frame)
+            if (jf > hold) rb_set_inst_real(player, SLOT_JFORCE, hold);
+            O.prot_frames++;
+        }
+        return 0;                                                       // (still his own path, just slower)
+    }
+    if (O.prot == PROT_MAX && player == O.rb) {
+        // the free rusher closest to the QB; meet him a few steps out, between him and the QB
+        int best = -1; double bd = 170, bx = 0, by = 0;
+        for (int k = 0; k < O.ndf; k++) {
+            double dx = rb_get_builtin_real(O.df[k], SLOT_X), dy = rb_get_builtin_real(O.df[k], SLOT_Y);
+            if (dx < -9000) continue;
+            int taken = 0;                                              // a lineman already has him
+            for (int j = 0; j < O.nol && !taken; j++)
+                taken = hypot(rb_get_builtin_real(O.ol[j], SLOT_X) - dx, rb_get_builtin_real(O.ol[j], SLOT_Y) - dy) < BLOCK_REACH;
+            double d = hypot(dx - qx, dy - qy) + (taken ? 60 : 0);
+            if (d < bd) { bd = d; best = k; bx = dx; by = dy; }
+        }
+        if (best >= 0) {
+            double d = hypot(bx - qx, by - qy), out = d * 0.6 < 34 ? d * 0.6 : 34;
+            steer(player, x, y, qx + (bx - qx) / d * out, qy + (by - qy) / d * out, 1.0);
+        } else steer(player, x, y, qx - O.fwd * 4, qy + (y < qy ? -24 : 24), 0.6);   // nobody free: set up beside the QB
+        return 1;
+    }
+    if (O.prot == PROT_UP || O.prot == PROT_DOWN) {                     // a lineman with nobody on him helps the slide side
+        int k = 0;
+        for (; k < O.nol; k++) if (O.ol[k] == player) break;
+        if (k == O.nol) return 0;
+        int best = -1; double bd = 110, bx = 0, by = 0;
+        for (int j = 0; j < O.ndf; j++) {
+            double dx = rb_get_builtin_real(O.df[j], SLOT_X), dy = rb_get_builtin_real(O.df[j], SLOT_Y);
+            if (dx < -9000) continue;
+            double d = hypot(dx - x, dy - y);
+            if (d < BLOCK_REACH + 5) return 0;                          // he's busy
+            if ((dy - qy) * side > 0 && fabs(dx - qx) < 90 && d < bd) { bd = d; best = j; bx = dx; by = dy; }
+        }
+        if (best < 0) return 0;
+        steer(player, x, y, bx, by, 0.8);
+        return 1;
+    }
+    return 0;
+}
+
 // after the game's AI moves a player (both teams)
 void rb_off_after_ai(CInstance *player) {
     if (!O.ball || !O.t_snap) return;
@@ -298,6 +403,7 @@ void rb_off_after_ai(CInstance *player) {
     }
     int i = 0;
     for (; i < O.ndf; i++) if (O.df[i] == player) break;
+    if (O.prot && (O.st == 1 || O.st == 2) && protect(player, x, y, i < O.ndf)) return;
     if (i == O.ndf || O.rusher[i]) return;
     if (O.t < O.pump_until && O.st == 2) {                            // bit on the pump
         if (hypot(O.plx - x, O.ply - y) < 150) steer(player, x, y, O.plx, O.ply, 1.0);
@@ -307,4 +413,12 @@ void rb_off_after_ai(CInstance *player) {
 }
 
 double rb_off_pa_bite(void) { return O.ball ? O.bite : 0; }
+// The back who stayed in to block stands in front of the QB: the throw leaves over him, he isn't the target.
+int rb_off_blocker_ignores_ball(CInstance *player) {
+    if (!O.ball || O.prot != PROT_MAX || player != O.rb || !O.qb) return 0;
+    if (rb_get_inst_real(O.ball, SLOT_STATE) != 3) return 0;
+    double d = hypot(rb_get_builtin_real(O.ball, SLOT_X) - rb_get_builtin_real(O.qb, SLOT_X),
+                     rb_get_builtin_real(O.ball, SLOT_Y) - rb_get_builtin_real(O.qb, SLOT_Y));
+    return d < 70;
+}
 int rb_off_scrambled(void) { return O.ball && O.scrambled; }

@@ -264,6 +264,15 @@ void hook_camera_step2(CInstance *self, CInstance *other) {     // obj_camera En
 
 extern unsigned rb_spr_calls;
 // route previews (s_draw_my_route): on CPU drives they'd show the player the CPU's routes
+// s_check_ball_collision, run as each player: can he catch / intercept / tip the ball this frame
+RValue *hook_ball_collision(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
+    if (rb_off_blocker_ignores_ball(self) || rb_dbrain_ball_contact(self, other)) {
+        res->kind = RV_UNDEFINED; res->i64 = 0;
+        return res;
+    }
+    return ORIG(ball_collision)(self, other, res, argc, argv);
+}
+
 RValue *hook_draw_route(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
     if (g_cpu_ball) { res->kind = RV_UNDEFINED; res->i64 = 0; return res; }
     return ORIG(draw_route)(self, other, res, argc, argv);

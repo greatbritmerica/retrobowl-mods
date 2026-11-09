@@ -20,6 +20,7 @@ HOOK(ball_draw, 0x10068dc68, "sub sp, sp, #0x1c0")
 HOOK(fieldtxt_draw, 0x1006f1a48, "stp d13, d12, [sp, #-0x90]!")
 HOOK(spr_draw, 0x1008d91cc, "sub sp, sp, #0x90")
 HOOK(draw_route, 0x1003892a0, "stp d13, d12, [sp, #-0x90]!")
+HOOK(ball_collision, 0x10010c210, "stp d9, d8, [sp, #-0x70]!")
 
 // Call-site redirects:  CALLSITE(name, bl_site_va, original_target_va)
 // In C define call_<name> with the target's exact signature and call the original via RB(target).
