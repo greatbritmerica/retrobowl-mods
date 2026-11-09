@@ -7,6 +7,10 @@ void rb_ui_side_menu(const char *title, const char *message, const char **button
 #define RB_PANEL_DEFCALL 0        // defensive call menu (CPU drives)
 #define RB_PANEL_PRESNAP 1        // play action / hot route (player's offense, before the snap)
 #define RB_PANEL_PUMP    2        // pump fake (player's offense, while aiming)
+#define RB_SIDE_LEFT 0
+#define RB_SIDE_RIGHT 1
+#define RB_SIDE_LEFT_BOTTOM 2
+#define RB_SIDE_RIGHT_BOTTOM 3
 void rb_ui_panel(int pid, int side, double width, const char *title, const char *message,
                  const char **buttons, int n, void (*cb)(int));
 void rb_ui_panel_close(int pid);

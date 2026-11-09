@@ -14,19 +14,23 @@
 #include "ui.h"
 #include "dbrain.h"
 #include "offtools.h"
+#include "input.h"
 
 #define SLOT_MY_ROUTE   0x100fa6ce8ULL
-#define VA_SET_MY_ROUTE 0x100513734ULL     // gml_Script_s_set_my_route(route_number), run as the receiver
+#define VA_SET_MY_ROUTE 0x100513734ULL     // gml_Script_s_set_my_route(route_name), run as the receiver
+#define VA_RV_FROM_CSTR 0x100bd6f74ULL     // YYRValue(const char*): how the game builds its string constants
 #define DRAG_DECAY      0.986
 #define AIR_K           8.75
 #define RUSH_DEPTH      45.0
-#define PA_FRAMES       30
+#define PA_FRAMES       42
 #define PUMP_FRAMES     16
 #define MAX_PUMPS       2
 
-// s_set_my_route's route numbers (its switch, read from the binary)
-static const struct { const char *name; int code; } ROUTES[] = {
-    { "Streak", 14 }, { "Post", 12 }, { "Slant", 1 }, { "Out", 5 }, { "Curl", 7 }, { "Flat", 0 },
+// s_set_my_route switches on the route's NAME (its case labels are the strings "route_streak", ...;
+// read from the game's static initializers). Same names as the path assets.
+static const struct { const char *name; const char *route; } ROUTES[] = {
+    { "Streak", "route_streak" }, { "Post", "route_post" }, { "Slant", "route_slant" },
+    { "Out", "route_out2" }, { "Curl", "route_curl" }, { "Flat", "route_flat" },
 };
 #define NROUTES 6
 
@@ -47,6 +51,7 @@ static struct {
 
 // UI callbacks arrive on the main thread between frames; the step acts on them
 static volatile int g_ev_presnap, g_ev_rcv, g_ev_route, g_ev_pump;
+static char g_last_pa[96];                                        // shown before the next snap
 
 static void cb_presnap(int i) { g_ev_presnap = i ? i : -1; }
 static void cb_rcv(int i)     { g_ev_rcv = i ? i : -1; }
@@ -55,7 +60,9 @@ static void cb_pump(int i)    { g_ev_pump = i ? 1 : -1; }
 
 static void show_presnap(void) {
     const char *b[2] = { O.pa_on ? "Play action: ON" : "Play action: off", "Hot route" };
-    rb_ui_panel(RB_PANEL_PRESNAP, 0, 150, "", O.note, b, 2, cb_presnap);
+    char msg[200];
+    snprintf(msg, sizeof msg, "%s%s%s", O.note, O.note[0] && g_last_pa[0] ? "\n" : "", g_last_pa);
+    rb_ui_panel(RB_PANEL_PRESNAP, RB_SIDE_LEFT, 150, "", msg, b, 2, cb_presnap);
     O.presnap_shown = 1;
 }
 
@@ -119,15 +126,20 @@ static void open_routes(void) {
     rb_ui_panel(RB_PANEL_PRESNAP, 0, 150, "New route", "", b, NROUTES + 1, cb_route);
 }
 
-static void apply_route(CInstance *rcv, int code, const char *name, const char *who) {
-    RValue arg = {0}; arg.kind = RV_REAL; arg.real = code;
+static void apply_route(CInstance *rcv, const char *route, const char *name, const char *who) {
+    RValue arg = {0};
+    ((void (*)(RValue *, const char *))RB(VA_RV_FROM_CSTR))(&arg, route);
     RValue *av[1] = { &arg };
     RValue res = {0}; res.kind = RV_UNDEFINED;
     double before = rb_get_inst_real(rcv, SLOT_MY_ROUTE);
     ((GMLScript)RB(VA_SET_MY_ROUTE))(rcv, rcv, &res, 1, av);
     double after = rb_get_inst_real(rcv, SLOT_MY_ROUTE);
-    rb_log("offtools: hot route %s -> %s (route %d, path %g -> %g)", who, name, code, before, after);
-    snprintf(O.note, sizeof O.note, "Hot: %s - %s", who, name);
+    ((void (*)(RValue *))RB(VA_RV_FREE))(&arg);
+    ((void (*)(RValue *))RB(VA_RV_FREE))(&res);
+    int ok = after != before && after >= 0;
+    rb_log("offtools: hot route %s -> %s (%s, path %g -> %g)%s", who, name, route, before, after, ok ? "" : "  NOT APPLIED");
+    if (ok) snprintf(O.note, sizeof O.note, "Hot: %s - %s", who, name);
+    else snprintf(O.note, sizeof O.note, "Hot route didn't take");
 }
 
 // ---------------------------------------------------------------- per frame (player on offense)
@@ -193,13 +205,14 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
                 if (O.rcv[O.pick] == O.rb) snprintf(who, sizeof who, "RB");
                 else if (O.pick == 0) snprintf(who, sizeof who, "top WR");
                 else snprintf(who, sizeof who, "receiver %d", O.pick + 1);
-                apply_route(O.rcv[O.pick], ROUTES[e - 1].code, ROUTES[e - 1].name, who);
+                apply_route(O.rcv[O.pick], ROUTES[e - 1].route, ROUTES[e - 1].name, who);
             }
             show_presnap();
         }
         return;
     }
 
+    if (st == 1) return;                                          // touched, but still in the aim deadzone (or a tap on our panel)
     // ---- after the snap
     if (O.presnap_shown) { rb_ui_panel_close(RB_PANEL_PRESNAP); O.presnap_shown = 0; }
     if (!O.offense_snap) return;
@@ -217,6 +230,8 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
             O.bite = 0.25 + 0.75 * f;
             O.pa_live = 1;
             rb_log("offtools: play action - your run share %.0f%%, the defense bites %.0f%%", rs * 100, O.bite * 100);
+            snprintf(g_last_pa, sizeof g_last_pa, "Last play action: they bit %s (%.0f%%)",
+                     O.bite > 0.7 ? "hard" : O.bite > 0.45 ? "some" : "barely - run more to sell it", O.bite * 100);
         }
     }
     if (O.pa_live && O.t - O.t_snap >= PA_FRAMES) O.pa_live = 0;
@@ -226,13 +241,19 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
     if (st == 2 && O.pumps < MAX_PUMPS) {
         if (!O.pump_shown) {
             static const char *b[1] = { "PUMP" };
-            rb_ui_panel(RB_PANEL_PUMP, 1, 96, "", "", b, 1, cb_pump);
+            rb_ui_panel(RB_PANEL_PUMP, RB_SIDE_LEFT_BOTTOM, 124, "", "", b, 1, cb_pump);
             O.pump_shown = 1;
         }
+        // or a second finger anywhere on the screen
+        static void *f_pressed;
+        if (!f_pressed) f_pressed = rb_builtin("device_mouse_check_button_pressed");
+        double a[2] = { 1, 1 };                                        // device 1 (second finger), mb_left
+        if (f_pressed && rb_call(f_pressed, ball, 2, a) > 0.5 && !g_ev_pump) { g_ev_pump = 1; rb_log("offtools: second-finger tap"); }
     } else if (O.pump_shown) { rb_ui_panel_close(RB_PANEL_PUMP); O.pump_shown = 0; }
     if (g_ev_pump) {
-        int e = g_ev_pump; g_ev_pump = 0; O.pump_shown = 0;              // the panel closed itself
-        if (e > 0 && st == 2) {
+        int e = g_ev_pump; g_ev_pump = 0;
+        if (O.pump_shown) { rb_ui_panel_close(RB_PANEL_PUMP); O.pump_shown = 0; }
+        if (e > 0 && st == 2 && O.t >= O.pump_until + 8) {          // (button and finger can both fire for one tap)
             double qx = rb_get_builtin_real(ball, SLOT_X), qy = rb_get_builtin_real(ball, SLOT_Y);
             double dir = rb_get_inst_real(ball, SLOT_DIREC) / 57.29577951308232;   // aim, screen degrees
             double drag = rb_get_inst_real(ball, SLOT_DRAGDIST);
@@ -262,7 +283,7 @@ void rb_off_after_ai(CInstance *player) {
     double x = rb_get_builtin_real(player, SLOT_X), y = rb_get_builtin_real(player, SLOT_Y);
     if (x < -9000) return;
     unsigned since = O.t - O.t_snap;
-    if (O.pa_live && player == O.rb && since < 18) {                  // the fake handoff: across the QB
+    if (O.pa_live && player == O.rb && since < 22) {                  // the fake handoff: across the QB
         steer(player, x, y, O.qbx + O.fwd * 25, O.qby, 1.0);
         return;
     }

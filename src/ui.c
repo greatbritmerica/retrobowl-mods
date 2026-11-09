@@ -138,7 +138,9 @@ void rb_ui_panel(int pid, int side, double width, const char *title, const char 
         double W = width, bh = 38, gap = 6, pad = 10;
         double th = c.t[0] ? 20 : 0, mh = c.m[0] ? (W > 150 ? 104 : 60) : 0;
         double H = pad + th + (mh ? mh + 4 : 0) + c.n * (bh + gap) + pad - gap;
-        double x = side ? wb.w - in.right - 6 - W : in.left + 6, y = (wb.h - H) / 2;
+        int right = side & 1, bottom = side & 2;                // 0 left, 1 right, 2 left-bottom, 3 right-bottom
+        double x = right ? wb.w - in.right - 6 - W : in.left + 6;
+        double y = bottom ? wb.h - in.bottom - 8 - H : (wb.h - H) / 2;
         if (y < in.top + 4) y = in.top + 4;
         id panel = MSG(id, RbRect)(MSG(id)(C("UIView"), S("alloc")), S("initWithFrame:"), (RbRect){ x, y, W, H });
         MSG(void, id)(panel, S("setBackgroundColor:"), MSG(id, double, double)(C("UIColor"), S("colorWithWhite:alpha:"), 0.0, 0.62));
