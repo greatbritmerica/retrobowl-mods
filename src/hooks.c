@@ -197,6 +197,7 @@ RValue *hook_update_ball(CInstance *self, CInstance *other, RValue *res, int arg
     rb_cpuqb_step(self, other, cpu_offense);
     rb_defcall_step(self, other, cpu_offense);
     rb_off_step(self, other, human >= 0 && poss >= 0 && !cpu_offense);
+    if (cpu_offense) rb_off_cpu_drive();
     rb_no_windup_sack = cpu_offense ? rb_cpuqb_scrambled() : rb_off_scrambled();
     double los, fwd, qbx, qby;
     rb_cpuqb_info(&los, &fwd, &qbx, &qby);

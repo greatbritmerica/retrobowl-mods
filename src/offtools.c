@@ -48,7 +48,7 @@ static struct {
     char note[96];
     CInstance *df[16]; double dfx[16]; int ndf, rusher[16];
     CInstance *ol[8]; double ol_d[8], front, rb_d; int nol;                                    // interior linemen (protection calls)
-    int prot, prot_frames, prot_noted;                            // this play's protection, how long it held someone up
+    int legs_done; int prot, prot_frames, prot_noted;                            // this play's protection, how long it held someone up
 } O;
 
 // Protection call. It stays as set from play to play (shown on the button) until changed.
@@ -59,6 +59,21 @@ enum { PROT_NORMAL, PROT_MAX, PROT_UP, PROT_DOWN, PROT_N };
 static const char *PROT_BTN[PROT_N] = { "Protect: normal", "Protect: MAX", "Protect: slide up", "Protect: slide down" };
 static const char *PROT_NAME[PROT_N] = { "Normal", "Max protect", "Slide up", "Slide down" };
 static int g_prot;
+
+// The back's legs. Every carry costs some (more for a long one); a play he doesn't carry gives a little
+// back; staying in on max protect costs a little instead. Tired legs are slower off the handoff. He
+// starts every one of your drives fresh (what a long drive costs him later is a question for after the
+// defense work).
+static double g_legs = 1.0;
+#define LEGS_CARRY      0.14      // per carry
+#define LEGS_PER_YARD   0.006     // extra per yard gained (to 20 yards)
+#define LEGS_REST       0.10      // back on a play he doesn't carry
+#define LEGS_BLOCK      0.03      // cost of staying in to block
+#define LEGS_FRESH      0.60      // at or above: full speed
+#define LEGS_WINDED     0.30      // below: gassed
+#define LEGS_FLOOR      0.72      // acceleration with nothing left
+#define PX_PER_YD       20.5
+static const char *legs_word(void) { return g_legs >= LEGS_FRESH ? "fresh" : g_legs >= LEGS_WINDED ? "winded" : "gassed"; }
 static char g_last_prot[96];                                      // shown before the next snap
 #define BLOCK_REACH   17.0        // blocker and rusher this close: engaged
 #define MAX_HOLD      0.30        // rusher's drive while the back has him
@@ -77,7 +92,8 @@ static void show_presnap(void) {
     const char *b[3] = { O.pa_on ? "Play action: ON" : "Play action: off", "Hot route", PROT_BTN[g_prot] };
     char msg[300]; int n = 0;
     msg[0] = 0;
-    if (O.note[0]) n += snprintf(msg + n, sizeof msg - n, "%s", O.note);
+    n += snprintf(msg + n, sizeof msg - n, "Back: %s", legs_word());
+    if (O.note[0]) n += snprintf(msg + n, sizeof msg - n, "\n%s", O.note);
     if (g_last_pa[0]) n += snprintf(msg + n, sizeof msg - n, "%s%s", n ? "\n" : "", g_last_pa);
     if (g_last_prot[0]) n += snprintf(msg + n, sizeof msg - n, "%s%s", n ? "\n" : "", g_last_prot);
     rb_ui_panel(RB_PANEL_PRESNAP, RB_SIDE_LEFT, 164, "", msg, b, 3, cb_presnap);
@@ -250,6 +266,11 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
             RValue r5 = rb_obj_ref(OBJ_PLAYER_OF);
             rb_with(&r5, ball, other, back_cb, 0);
             rb_log("offtools: line %.0f px ahead of the QB, %d linemen, back %s", ahead, O.nol, O.rb ? "found" : "none");
+            if (O.rb && g_legs < LEGS_FRESH) {                    // tired legs (players are rebuilt every play, so this is per play)
+                double m = LEGS_FLOOR + (g_legs / LEGS_FRESH) * (1.0 - LEGS_FLOOR), a = rb_get_inst_real(O.rb, SLOT_MY_ACCEL);
+                if (a > 0) rb_set_inst_real(O.rb, SLOT_MY_ACCEL, a * m);
+                rb_log("offtools: back is %s (legs %.0f%%) - acceleration x%.2f (%.3f -> %.3f)", legs_word(), g_legs * 100, m, a, a * m);
+            }
             O.nrcv = 0;                                           // a real offensive snap has route runners
             RcvCtx rc = { O.qb };
             RValue r3 = rb_obj_ref(OBJ_PLAYER_OF);
@@ -312,6 +333,24 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
             rb_log("offtools: play action - your run share %.0f%%, the defense bites %.0f%%", rs * 100, O.bite * 100);
             snprintf(g_last_pa, sizeof g_last_pa, "Last play action: they bit %s (%.0f%%)",
                      O.bite > 0.7 ? "hard" : O.bite > 0.45 ? "some" : "barely - run more to sell it", O.bite * 100);
+        }
+    }
+    if (!O.legs_done && (st == 4 || st == 6 || st == 7 || st == 8 || st == 9 || st == 11)) {   // play over: the back's legs
+        O.legs_done = 1;
+        double before = g_legs;
+        if (O.run_play) {
+            double yds = (rb_get_builtin_real(ball, SLOT_X) - O.los) * O.fwd / PX_PER_YD;
+            if (yds < 0) yds = 0;
+            if (yds > 20) yds = 20;
+            g_legs -= LEGS_CARRY + LEGS_PER_YARD * yds;
+            if (g_legs < 0) g_legs = 0;
+            rb_log("offtools: carry for %.0f yds - back's legs %.0f%% -> %.0f%% (%s)", yds, before * 100, g_legs * 100, legs_word());
+        } else {
+            g_legs += O.prot == PROT_MAX ? -LEGS_BLOCK : LEGS_REST;
+            if (g_legs > 1) g_legs = 1;
+            if (g_legs < 0) g_legs = 0;
+            if (g_legs != before) rb_log("offtools: back %s - legs %.0f%% -> %.0f%% (%s)", O.prot == PROT_MAX ? "stayed in to block" : "rested",
+                                         before * 100, g_legs * 100, legs_word());
         }
     }
     if (O.pa_live && O.t - O.t_snap >= PA_FRAMES) O.pa_live = 0;
@@ -458,4 +497,8 @@ int rb_off_blocker_ignores_ball(CInstance *player) {
 }
 // The match objects are being destroyed (every play is rebuilt from scratch): drop every pointer.
 void rb_off_forget(void) { O.ball = 0; O.qb = O.rb = 0; O.nol = O.ndf = O.nrcv = 0; O.t_snap = 0; O.prot = 0; }
+// The other team is running its offense: your back is fresh again for your next drive.
+void rb_off_cpu_drive(void) {
+    if (g_legs < 1.0) { rb_log("offtools: other team has the ball - back fresh for your next drive (was %.0f%%)", g_legs * 100); g_legs = 1.0; }
+}
 int rb_off_scrambled(void) { return O.ball && O.scrambled; }
