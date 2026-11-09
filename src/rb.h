@@ -13,6 +13,7 @@
 enum {
     TAB_MAGIC       = 0,
     TAB_GATE_ATTACK = 1,   // custom stub: commentary ATTACK stage, play-on-field vs simulate decision
+    TAB_NO_WINDUP   = 2,   // int*: nonzero = skip the Extreme windup-sack check (scramble throws; binary cave_tb)
     TAB_HOOK_BASE   = 8,   // entry hooks from hooks.def start here
 };
 

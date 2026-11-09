@@ -11,3 +11,4 @@ void rb_cpuqb_fourth_closed(void);
 int rb_cpuqb_receiver(double *x, double *y);
 void rb_cpuqb_fourth_tick(void);
 extern double rb_cpuqb_fg_dist;
+int rb_cpuqb_scrambled(void);           // the CPU QB scrambled on this play

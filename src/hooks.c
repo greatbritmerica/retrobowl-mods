@@ -112,6 +112,7 @@ RValue *hook_action_result(CInstance *self, CInstance *other, RValue *res, int a
 }
 
 static int g_cpu_ball;          // the CPU has the ball on the field (playable defense)
+int rb_no_windup_sack;          // read by the binary's windup-sack check: a QB who scrambled and pulled up isn't sacked mid-throw
 static int g_cpu_clearing;      // our own response call is closing the message
 
 // per-step ball update: CPU quarterback on CPU drives, ball-state log
@@ -190,6 +191,7 @@ RValue *hook_update_ball(CInstance *self, CInstance *other, RValue *res, int arg
     rb_cpuqb_step(self, other, cpu_offense);
     rb_defcall_step(self, other, cpu_offense);
     rb_off_step(self, other, human >= 0 && poss >= 0 && !cpu_offense);
+    rb_no_windup_sack = cpu_offense ? rb_cpuqb_scrambled() : rb_off_scrambled();
     double los, fwd, qbx, qby;
     rb_cpuqb_info(&los, &fwd, &qbx, &qby);
     rb_def_step(self, other, cpu_offense, los, fwd, qbx, qby);
@@ -324,4 +326,5 @@ void rb_install_hooks(void **tab) {
 #undef HOOK
 #undef CALLSITE
     tab[TAB_GATE_ATTACK] = (void *)rb_gate_attack;
+    tab[TAB_NO_WINDUP] = (void *)&rb_no_windup_sack;
 }

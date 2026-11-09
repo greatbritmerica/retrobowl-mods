@@ -43,7 +43,7 @@ static struct {
     int pa_on, pa_live, run_play;
     double bite;
     int pumps; unsigned pump_until; double plx, ply;
-    int presnap_shown, pump_shown, offense_snap;
+    int presnap_shown, pump_shown, offense_snap, scrambled;
     CInstance *rcv[6]; double rcv_y[6]; int nrcv, pick;
     char note[96];
     CInstance *df[16]; double dfx[16]; int ndf, rusher[16];
@@ -159,6 +159,11 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
     }
     O.prev_st = O.st; O.st = st;
 
+    if (st == 0 && O.t_snap) {                                    // back to 0 mid-play: scramble, pulled up to pass
+        if (!O.scrambled) rb_log("offtools: scramble pull-up - no windup sack on this throw");
+        O.scrambled = 1;
+        return;
+    }
     if (st == 0) {
         if (!O.fwd) {                                             // orient: QB, back, line
             CInstance *qb = 0;                                    // the ball's holder (as the rest of the mod finds him)
@@ -296,3 +301,5 @@ void rb_off_after_ai(CInstance *player) {
     }
     if (O.pa_live && since < PA_FRAMES) steer(player, x, y, O.los + O.fwd * 15, y, O.bite);   // step up for the run
 }
+
+int rb_off_scrambled(void) { return O.ball && O.scrambled; }

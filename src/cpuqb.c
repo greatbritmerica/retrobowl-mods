@@ -771,3 +771,5 @@ void rb_cpuqb_fourth_closed(void) {
         rb_cpuqb_fourth_msg = 0; g_fourth_wait = 0; g_fourth_answered = 1;
     }
 }
+
+int rb_cpuqb_scrambled(void) { return Q.scrambled; }
