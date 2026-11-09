@@ -254,6 +254,8 @@ static void decide_read(void) {
 // in the ball's path the interception; here that only happens on the throws decide_read() gave to the
 // defense. On the rest the defender tips it (the game's own tipped-pass routine) or just misses.
 // Returns 1 when the game's check must be skipped for this player this frame.
+void rb_dbrain_forget(void) { P.ball = 0; P.rcv = 0; P.jumper = 0; P.kind = 0; }
+
 int rb_dbrain_ball_contact(CInstance *player, CInstance *other) {
     if (!P.ball || !P.extreme || P.kind != 1) return 0;
     if (rb_get_inst_real(P.ball, SLOT_STATE) != 3) return 0;
@@ -267,7 +269,7 @@ int rb_dbrain_ball_contact(CInstance *player, CInstance *other) {
     decide_read();
     if (P.undercut) return 0;                                           // this one can be picked: the game decides
     double h = rb_get_inst_real(P.ball, SLOT_HEIGHT);
-    if (P.tip && !P.tipped && h <= 20) {
+    if (P.tip && !P.tipped && h <= 50) {                                // within a leaping defender's reach (the game lets a jumping player catch up to 60)
         P.tipped = 1;
         RValue no = {0}; no.kind = RV_BOOL;
         RValue *av[1] = { &no };

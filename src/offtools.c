@@ -47,7 +47,7 @@ static struct {
     CInstance *rcv[6]; double rcv_y[6]; int nrcv, pick;
     char note[96];
     CInstance *df[16]; double dfx[16]; int ndf, rusher[16];
-    CInstance *ol[8]; int nol;                                    // interior linemen (protection calls)
+    CInstance *ol[8]; double ol_d[8], front, rb_d; int nol;                                    // interior linemen (protection calls)
     int prot, prot_frames, prot_noted;                            // this play's protection, how long it held someone up
 } O;
 
@@ -96,11 +96,32 @@ typedef struct { double sx; int n; } MeanCtx;
 static int qb_cb(CInstance *inst, void *ctx) { *(CInstance **)ctx = inst; return 1; }
 static int mean_cb(CInstance *inst, void *vc) { MeanCtx *m = vc; m->sx += rb_get_builtin_real(inst, SLOT_X); m->n++; return 0; }
 
+// front of the offense near the ball (in the direction of play)
+static int front_cb(CInstance *inst, void *vc) {
+    (void)vc;
+    if (inst == O.qb) return 0;
+    double x = rb_get_builtin_real(inst, SLOT_X), y = rb_get_builtin_real(inst, SLOT_Y);
+    if (fabs(y - O.qby) < 55 && x * O.fwd > O.front) O.front = x * O.fwd;
+    return 0;
+}
+// interior linemen: on that front (the five closest to the ball are kept after the scan)
 static int ol_cb(CInstance *inst, void *vc) {
     (void)vc;
-    if (O.nol >= 8 || inst == O.qb || inst == O.rb) return 0;
+    if (inst == O.qb || O.nol >= 8) return 0;
     double x = rb_get_builtin_real(inst, SLOT_X), y = rb_get_builtin_real(inst, SLOT_Y);
-    if (fabs(x - O.los) < 30 && fabs(y - O.qby) < 55) O.ol[O.nol++] = inst;
+    if (fabs(x * O.fwd - O.front) > 16 || fabs(y - O.qby) >= 55) return 0;
+    O.ol[O.nol] = inst; O.ol_d[O.nol] = fabs(y - O.qby); O.nol++;
+    return 0;
+}
+// the back: behind the line, closest to the spot just behind the QB (not the QB, not a lineman)
+static int back_cb(CInstance *inst, void *vc) {
+    (void)vc;
+    if (inst == O.qb) return 0;
+    for (int k = 0; k < O.nol; k++) if (O.ol[k] == inst) return 0;
+    double x = rb_get_builtin_real(inst, SLOT_X), y = rb_get_builtin_real(inst, SLOT_Y);
+    if ((x - O.los) * O.fwd > -20) return 0;
+    double d = hypot(x - (O.qbx - O.fwd * 40), y - O.qby);
+    if (d < 110 && d < O.rb_d) { O.rb_d = d; O.rb = inst; }
     return 0;
 }
 
@@ -208,10 +229,27 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
             if (!m.n) return;
             O.fwd = (m.sx / m.n < O.qbx) ? -1 : 1;
             O.los = O.qbx + O.fwd * 35;
-            NearCtx b = { O.qbx - O.fwd * 40, O.qby, 0, 1e9 };    // the back: right behind/beside the QB
+            // The real line: the front of the offense around the ball. (Under centre that is ~40 px ahead
+            // of the QB, in the shotgun ~100 - a fixed offset from the QB missed the whole line there.)
             RValue r2 = rb_obj_ref(OBJ_PLAYER_OF);
-            rb_with(&r2, ball, other, near_cb, &b);
-            O.rb = (b.best && b.best != O.qb && b.bd < 70) ? b.best : 0;
+            O.front = -1e9; O.nol = 0; O.rb = 0; O.rb_d = 1e9;
+            rb_with(&r2, ball, other, front_cb, 0);
+            double ahead = O.front - O.qbx * O.fwd;
+            if (ahead > 10 && ahead < 170) {
+                O.los = O.front * O.fwd + O.fwd * 6;
+                RValue r4 = rb_obj_ref(OBJ_PLAYER_OF);
+                rb_with(&r4, ball, other, ol_cb, 0);
+                for (int i = 0; i < O.nol; i++)                       // closest to the ball first
+                    for (int j = i + 1; j < O.nol; j++)
+                        if (O.ol_d[j] < O.ol_d[i]) {
+                            CInstance *ti = O.ol[i]; O.ol[i] = O.ol[j]; O.ol[j] = ti;
+                            double td = O.ol_d[i]; O.ol_d[i] = O.ol_d[j]; O.ol_d[j] = td;
+                        }
+                if (O.nol > 5) O.nol = 5;
+            }
+            RValue r5 = rb_obj_ref(OBJ_PLAYER_OF);
+            rb_with(&r5, ball, other, back_cb, 0);
+            rb_log("offtools: line %.0f px ahead of the QB, %d linemen, back %s", ahead, O.nol, O.rb ? "found" : "none");
             O.nrcv = 0;                                           // a real offensive snap has route runners
             RcvCtx rc = { O.qb };
             RValue r3 = rb_obj_ref(OBJ_PLAYER_OF);
@@ -262,9 +300,6 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
         O.prot = O.run_play ? PROT_NORMAL : g_prot;
         g_last_prot[0] = 0;
         if (O.prot) {
-            O.nol = 0;
-            RValue of = rb_obj_ref(OBJ_PLAYER_OF);
-            rb_with(&of, ball, other, ol_cb, 0);
             if (O.prot == PROT_MAX && !O.rb) O.prot = PROT_NORMAL;      // empty backfield: nobody to keep in
             rb_log("offtools: protection %s - %d linemen%s", PROT_NAME[O.prot], O.nol, O.prot == PROT_MAX ? ", back stays in" : "");
         }
@@ -421,4 +456,6 @@ int rb_off_blocker_ignores_ball(CInstance *player) {
                      rb_get_builtin_real(O.ball, SLOT_Y) - rb_get_builtin_real(O.qb, SLOT_Y));
     return d < 70;
 }
+// The match objects are being destroyed (every play is rebuilt from scratch): drop every pointer.
+void rb_off_forget(void) { O.ball = 0; O.qb = O.rb = 0; O.nol = O.ndf = O.nrcv = 0; O.t_snap = 0; O.prot = 0; }
 int rb_off_scrambled(void) { return O.ball && O.scrambled; }

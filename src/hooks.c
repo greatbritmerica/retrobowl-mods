@@ -89,6 +89,7 @@ int rb_gate_attack(CInstance *self, int human_has_ball) {
 // =============================================================== diagnostics
 // game's own debug log (slog) -> rbmod.log
 static void fourth_check(const char *txt, const char *via);
+static int g_match_live;        // a ball has stepped since the match objects were last (re)built
 RValue *hook_slog(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
     rb_input_install();
     char line[400]; int n = 0;
@@ -99,6 +100,10 @@ RValue *hook_slog(CInstance *self, CInstance *other, RValue *res, int argc, RVal
     line[n < (int)sizeof line ? n : (int)sizeof line - 1] = 0;
     rb_log("slog: %s", line);
     if (!strncmp(line, "s_create_message[", 17)) fourth_check(line, "slog");
+    if (!strncmp(line, "s_destroy_match_objects", 23)) {             // ball and players are about to be freed
+        g_match_live = 0;
+        rb_off_forget(); rb_dbrain_forget();
+    }
     return ORIG(slog)(self, other, res, argc, argv);
 }
 
@@ -183,6 +188,7 @@ static void cpu_boost(CInstance *ball, CInstance *other, int cpu_offense) {
 
 RValue *hook_update_ball(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
     rb_frame++;
+    g_match_live = 1;
     double human = rb_get_obj_real(OBJ_MASTER, SLOT_PLAYERTEAMINDEX);
     double poss = rb_get_obj_real(OBJ_CONTROLLER, SLOT_POSSESSION);
     int cpu_offense = human >= 0 && poss >= 0 && poss != human;
@@ -266,7 +272,7 @@ extern unsigned rb_spr_calls;
 // route previews (s_draw_my_route): on CPU drives they'd show the player the CPU's routes
 // s_check_ball_collision, run as each player: can he catch / intercept / tip the ball this frame
 RValue *hook_ball_collision(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
-    if (rb_off_blocker_ignores_ball(self) || rb_dbrain_ball_contact(self, other)) {
+    if (g_match_live && (rb_off_blocker_ignores_ball(self) || rb_dbrain_ball_contact(self, other))) {
         res->kind = RV_UNDEFINED; res->i64 = 0;
         return res;
     }
