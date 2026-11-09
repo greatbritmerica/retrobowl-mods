@@ -18,7 +18,7 @@ static struct {
     CInstance *ball;
     int extreme, kind;              // kind: 0 none, 1 pass, 2 run
     double los, fwd, qby, prev_st;
-    double lx, ly, bx0, by0; int zone, scored, pend; unsigned t, t_throw;
+    double lx, ly, bx0, by0, down, togo; int zone, scored, pend; unsigned t, t_throw;
     CInstance *rcv;                 // intended receiver (offense player nearest the landing spot)
 } P;
 
@@ -75,7 +75,7 @@ static int g_bal_loaded;
 static void bal_load(void) {
     if (g_bal_loaded) return;
     g_bal_loaded = 1;
-    const char *h = getenv("HOME"); char fp[1024]; snprintf(fp, sizeof fp, "%s/Documents/rbmod_balance.txt", h ? h : ".");
+    const char *h = getenv("HOME"); char fp[1024]; snprintf(fp, sizeof fp, "%s/Documents/rbmod_balance2.txt", h ? h : ".");
     FILE *f = fopen(fp, "r"); if (!f) return;
     char line[128]; double r, d;
     if (fgets(line, sizeof line, f) && sscanf(line, "%lf %lf", &r, &d) == 2 && d >= 0.1 && d <= 1.0) { g_rate = r; g_dial = d; }
@@ -83,18 +83,20 @@ static void bal_load(void) {
     rb_log("balance: loaded (player pass success %.0f%%, defense dial %.2f)", g_rate * 100, g_dial);
 }
 static void bal_save(void) {
-    const char *h = getenv("HOME"); char fp[1024]; snprintf(fp, sizeof fp, "%s/Documents/rbmod_balance.txt", h ? h : ".");
+    const char *h = getenv("HOME"); char fp[1024]; snprintf(fp, sizeof fp, "%s/Documents/rbmod_balance2.txt", h ? h : ".");
     FILE *f = fopen(fp, "w"); if (!f) return;
     fprintf(f, "%.4f %.4f\n", g_rate, g_dial); fclose(f);
 }
 double rb_dbrain_dial(void) { bal_load(); return g_dial; }
-static void bal_pass(int success) {
+static void bal_play(int success, const char *kind, double yds, double down, double togo) {
     bal_load();
     g_rate += ((success ? 1.0 : 0.0) - g_rate) * 0.15;
     g_dial += (g_rate - 0.5) * 0.25;                         // completing more than half -> tighten
     if (g_dial < 0.1) g_dial = 0.1;
     if (g_dial > 1.0) g_dial = 1.0;
-    rb_log("balance: player pass %s -> success %.0f%%, defense dial %.2f", success ? "worked" : "stopped", g_rate * 100, g_dial);
+    rb_log("balance: player %s %.1f yds on %s & %.0f %s -> success %.0f%%, defense dial %.2f", kind, yds,
+           down <= 1 ? "1st" : down == 2 ? "2nd" : down == 3 ? "3rd" : "4th", togo,
+           success ? "worked" : "stopped", g_rate * 100, g_dial);
     bal_save();
 }
 
@@ -159,6 +161,8 @@ void rb_dlearn_step(CInstance *ball, CInstance *other, int human_offense) {
         P.fwd = (m.sx / m.n < qx) ? -1 : 1;
         P.los = qx + P.fwd * 35;
         P.qby = rb_get_builtin_real(qb, SLOT_Y);
+        P.down = rb_get_obj_real(OBJ_CONTROLLER, SLOT_DOWN);
+        P.togo = rb_get_obj_real(OBJ_CONTROLLER, SLOT_YARDS);
     }
     if (P.pend && st == 3) {                                    // thrown: predict where it lands once it has speed
         // direction from the ball's actual movement (the stored direction can point back along the
@@ -190,8 +194,15 @@ void rb_dlearn_step(CInstance *ball, CInstance *other, int human_offense) {
         P.scored = 1;
         double yds = (st == 7 || st == 9) ? 0 : (bx - P.los) * P.fwd / PX_PER_YD;
         if (P.kind == 1 && P.zone >= 0) learn_pass(P.zone, st == 9 ? -10 : yds);
-        if (P.kind == 1 && P.extreme) bal_pass((st == 4 || st == 6) && yds > 0);
-        else if (P.kind == 2) learn_run(yds);
+        // a play "works" the way football counts it: 40% of the distance on 1st down, 60% on 2nd,
+        // all of it on 3rd/4th (or a touchdown). A 2-yard catch on 3rd and 8 is a stop.
+        if ((P.kind == 1 || P.kind == 2) && P.extreme) {
+            double togo = P.togo > 0 && P.togo < 99 ? P.togo : 10;
+            double need = P.down <= 1 ? 0.4 * togo : P.down == 2 ? 0.6 * togo : togo;
+            int ok = st == 6 || (st == 4 && yds > 0 && yds >= need - 0.05);
+            bal_play(ok, P.kind == 1 ? "pass" : "run", yds, P.down, togo);
+        }
+        if (P.kind == 2) learn_run(yds);
     }
     P.prev_st = st;
 }
