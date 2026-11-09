@@ -159,6 +159,10 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
     }
     O.prev_st = O.st; O.st = st;
 
+    if (O.prev_st == 5 && (st == 1 || st == 2) && !O.scrambled) { // QB ran (carrier) then pulled up to aim again
+        rb_log("offtools: scramble pull-up (run -> aim) - no windup sack on this throw");
+        O.scrambled = 1;
+    }
     if (st == 0 && O.t_snap) {                                    // back to 0 mid-play: scramble, pulled up to pass
         if (!O.scrambled) rb_log("offtools: scramble pull-up - no windup sack on this throw");
         O.scrambled = 1;
