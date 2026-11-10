@@ -285,6 +285,7 @@ static void decide_read(void) {
     if (whiff > 0.65) whiff = 0.65;
     whiff += 0.25 * P.late;                                             // fooled by play action: misses more
     whiff += QUICK_WHIFF * P.quick;                                     // and against a quick release
+    if (whiff > 0.90) whiff = 0.90;                                     // (he is never certain to miss)
     double u = arc4random_uniform(10000) / 10000.0;
     if (u < p) P.play = PLAY_PICK;
     else {
