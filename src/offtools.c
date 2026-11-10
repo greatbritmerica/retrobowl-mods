@@ -73,7 +73,7 @@ static double g_legs = 1.0;
 #define LEGS_CARRY      0.14      // per carry
 #define LEGS_PER_YARD   0.006     // extra per yard gained (to 20 yards)
 #define LEGS_REST       0.06      // back on a play he doesn't carry (0.10 let one pass undo most of a carry: he never tired)
-#define LEGS_BLOCK      0.03      // cost of staying in to block
+#define LEGS_BLOCK      0.0       // staying in to block: no rest, no cost (0.03 a play ran him to gassed without a carry)
 #define LEGS_FRESH      0.75      // at or above: full speed
 #define LEGS_WINDED     0.40      // below: gassed
 #define LEGS_FLOOR      0.65      // acceleration with nothing left
@@ -455,7 +455,7 @@ static int protect(CInstance *player, double x, double y, int is_def) {
     }
     if (O.prot == PROT_MAX && player == O.rb) {
         // the free rusher closest to the QB; meet him a few steps out, between him and the QB
-        int best = -1, btaken = 0; double bd = 170, bx = 0, by = 0;
+        int best = -1, btaken = 0; double bd = 240, bx = 0, by = 0;       // (170 never reached the line from the shotgun, ~100 px away)
         for (int k = 0; k < O.ndf; k++) {
             double dx = rb_get_builtin_real(O.df[k], SLOT_X), dy = rb_get_builtin_real(O.df[k], SLOT_Y);
             if (dx < -9000) continue;
