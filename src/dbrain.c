@@ -108,11 +108,15 @@ static void bal_play(int success, const char *kind, double yds, double down, dou
     int k = kind[0] == 'r';
     // The dial follows the recent success rate directly (no running total), so it can't wind itself up
     // to the max on a hot streak and stay there: 50% -> middle, each 10% above/below moves it 0.12,
-    // and it never reaches the extremes (0.25 - 0.85).
+    // and it never drops below 0.25.
     g_rate[k] += ((success ? 1.0 : 0.0) - g_rate[k]) * 0.12;
     double target = 0.55 + (g_rate[k] - 0.5) * 1.2;
     if (target < 0.25) target = 0.25;
-    if (target > 0.85) target = 0.85;
+    // Pass coverage may go to 1.0: at 0.85 it sat on the ceiling for two straight games while 65% of
+    // passes still worked. (Picks no longer depend on this dial, so a high value means tight coverage,
+    // not an interception spree.) The run side keeps 0.85.
+    double top = k == 0 ? 1.0 : 0.85;
+    if (target > top) target = top;
     g_dial[k] += (target - g_dial[k]) * 0.35;
     rb_log("balance: player %s %.1f yds on %s & %.0f %s -> %s success %.0f%%, %s dial %.2f", kind, yds,
            down <= 1 ? "1st" : down == 2 ? "2nd" : down == 3 ? "3rd" : "4th", togo,
