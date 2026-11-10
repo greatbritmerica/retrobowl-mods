@@ -29,8 +29,14 @@
 // s_set_my_route switches on the route's NAME (its case labels are the strings "route_streak", ...;
 // read from the game's static initializers). Same names as the path assets.
 static const struct { const char *name; const char *route; } ROUTES[] = {
-    { "Streak", "route_streak" }, { "Post", "route_post" }, { "Slant", "route_slant" },
-    { "Out", "route_out2" }, { "Curl", "route_curl" }, { "Flat", "route_flat" },
+    // Shapes from the game's path assets (forward, then the break; ~20.5 px a yard), shortest first:
+    //   hitch   5 yds, stop and turn back          slant   5 yds, then a long diagonal inside
+    //   dig     9 yds, square in                   curl    11 yds, back to 8 inside
+    //   post    9 yds, angle inside to 12          corner  9 yds, angle outside to 12
+    // Dropped after 150 uses in the logs: Flat (a back's route - 1.5 yds up, 3 across, then he stands
+    // at the line holding his defender there), Out (1 of 4 worked) and Streak (called once).
+    { "Hitch", "route_hitch" }, { "Slant", "route_slant" }, { "Dig", "route_dig2" },
+    { "Curl", "route_curl" }, { "Post", "route_post" }, { "Corner", "route_corner" },
 };
 #define NROUTES 6
 
