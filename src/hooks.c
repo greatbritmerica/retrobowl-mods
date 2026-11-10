@@ -150,6 +150,27 @@ static void cpu_fourth_action(CInstance *self, CInstance *other) {
     g_cpu_clearing = 0;
 }
 
+static double g_def_mult = 1.0;     // the burst boost the CPU defense got this play
+static int holder_cb(CInstance *inst, void *ctx) { *(CInstance **)ctx = inst; return 1; }
+
+// An interception: the defender who caught it keeps his Extreme burst boost as a ball carrier, and none
+// of your players has one - returns were running ~2.1-3.0 px/frame against ~1.3-1.7 for your own
+// carriers, so nobody could run him down. With the ball in his hands he is an ordinary player again.
+static void int_return_fix(CInstance *ball, CInstance *other) {
+    static CInstance *done;
+    if (ball == done || g_def_mult <= 1.01) return;
+    RValue *h = rb_inst_var(ball, SLOT_HOLDER);
+    CInstance *who = 0;
+    if (h && h->kind != RV_UNDEFINED) { RValue c = *h; rb_with(&c, ball, other, holder_cb, &who); }
+    if (!who) return;                                       // holder not set yet: try again next frame
+    done = ball;
+    double a = rb_get_inst_real(who, SLOT_MY_ACCEL);
+    if (a > 0 && a < 100) {
+        rb_set_inst_real(who, SLOT_MY_ACCEL, a / g_def_mult);
+        rb_log("int return: returner's burst boost removed (acceleration %.3f -> %.3f)", a, a / g_def_mult);
+    }
+}
+
 // ---- CPU athleticism: on Extreme the CPU's players get a burst boost every play (both sides of the ball)
 #define CPU_ACCEL_BOOST 1.35
 typedef struct { int n; double before, after, mult; } BoostCtx;
@@ -181,6 +202,7 @@ static void cpu_boost(CInstance *ball, CInstance *other, int cpu_offense) {
     BoostCtx c = { 0, 0, 0, cpu_offense ? CPU_ACCEL_BOOST : 1.0 + 0.5 * rb_dbrain_dial() };
     RValue r = rb_obj_ref(cpu_offense ? OBJ_PLAYER_OF : OBJ_PLAYER_DF);
     rb_with(&r, ball, other, boost_cb, &c);
+    if (!cpu_offense) g_def_mult = c.mult;
     static int logs;
     if (c.n && logs++ < 12) rb_log("boost: CPU %s x%.2f acceleration (%d players, avg %.3f -> %.3f)",
                                   cpu_offense ? "offense" : "defense", c.mult, c.n, c.before / c.n, c.after / c.n);
@@ -204,6 +226,7 @@ RValue *hook_update_ball(CInstance *self, CInstance *other, RValue *res, int arg
     rb_def_step(self, other, cpu_offense, los, fwd, qbx, qby);
     rb_dlearn_step(self, other, human >= 0 && poss >= 0 && poss == human);
     double st = rb_get_inst_real(self, SLOT_STATE);
+    if (st == 9 && human >= 0 && !cpu_offense) int_return_fix(self, other);
     if (st != g_last_state) {
         rb_log("ball f%u state %g -> %g  pos %.0f,%.0f vel %.2f dist %.1f %s",
                rb_frame, g_last_state, st, rb_get_builtin_real(self, SLOT_X), rb_get_builtin_real(self, SLOT_Y),
