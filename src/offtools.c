@@ -72,11 +72,11 @@ static double g_slide_lean;
 static double g_legs = 1.0;
 #define LEGS_CARRY      0.14      // per carry
 #define LEGS_PER_YARD   0.006     // extra per yard gained (to 20 yards)
-#define LEGS_REST       0.10      // back on a play he doesn't carry
+#define LEGS_REST       0.06      // back on a play he doesn't carry (0.10 let one pass undo most of a carry: he never tired)
 #define LEGS_BLOCK      0.03      // cost of staying in to block
-#define LEGS_FRESH      0.60      // at or above: full speed
-#define LEGS_WINDED     0.30      // below: gassed
-#define LEGS_FLOOR      0.72      // acceleration with nothing left
+#define LEGS_FRESH      0.75      // at or above: full speed
+#define LEGS_WINDED     0.40      // below: gassed
+#define LEGS_FLOOR      0.65      // acceleration with nothing left
 #define PX_PER_YD       20.5
 static const char *legs_word(void) { return g_legs >= LEGS_FRESH ? "fresh" : g_legs >= LEGS_WINDED ? "winded" : "gassed"; }
 static char g_last_prot[96];                                      // shown before the next snap
