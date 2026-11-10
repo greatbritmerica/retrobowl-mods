@@ -48,7 +48,7 @@ static struct {
     char note[96];
     CInstance *df[16]; double dfx[16]; int ndf, rusher[16];
     CInstance *ol[8]; double ol_d[8], front, rb_d; int nol;                                    // interior linemen (protection calls)
-    int legs_done; int prot, prot_frames, prot_noted;                            // this play's protection, how long it held someone up
+    int legs_done; double slide_read; int prot, prot_frames, prot_noted;                            // this play's protection, how long it held someone up
 } O;
 
 // Protection call. It stays as set from play to play (shown on the button) until changed.
@@ -59,6 +59,11 @@ enum { PROT_NORMAL, PROT_MAX, PROT_UP, PROT_DOWN, PROT_N };
 static const char *PROT_BTN[PROT_N] = { "Protect: normal", "Protect: MAX", "Protect: slide up", "Protect: slide down" };
 static const char *PROT_NAME[PROT_N] = { "Normal", "Max protect", "Slide up", "Slide down" };
 static int g_prot;
+// Which way you've been sliding lately (-1 = always up, +1 = always down). A defense that keeps seeing
+// the same slide brings speed off the other edge; mixing the calls keeps it honest.
+static double g_slide_lean;
+#define SLIDE_READ_FROM 0.40      // lean at which they start to catch on (about the 3rd same slide in a row)
+#define SLIDE_EDGE_MAX  0.30      // the weak-side edge rusher's extra acceleration when they're sure
 
 // The back's legs. Every carry costs some (more for a long one); a play he doesn't carry gives a little
 // back; staying in on max protect costs a little instead. Tired legs are slower off the handoff. He
@@ -318,6 +323,24 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
         RValue d = rb_obj_ref(OBJ_PLAYER_DF);
         rb_with(&d, ball, other, df_cb, 0);
         for (int i = 0; i < O.ndf; i++) O.rusher[i] = fabs(O.dfx[i] - O.los) < RUSH_DEPTH;
+        if (!O.run_play) {
+            double side = g_prot == PROT_UP ? -1 : g_prot == PROT_DOWN ? 1 : 0;
+            if (side != 0 && g_slide_lean * side > SLIDE_READ_FROM) {
+                O.slide_read = (g_slide_lean * side - SLIDE_READ_FROM) / (1.0 - SLIDE_READ_FROM);
+                int e = -1; double far = 0;                           // widest rusher on the side you slid away from
+                for (int i = 0; i < O.ndf; i++) {
+                    if (!O.rusher[i]) continue;
+                    double off = (rb_get_builtin_real(O.df[i], SLOT_Y) - O.qby) * -side;
+                    if (off > 8 && off > far) { far = off; e = i; }
+                }
+                if (e >= 0) {
+                    double a = rb_get_inst_real(O.df[e], SLOT_MY_ACCEL), m = 1.0 + SLIDE_EDGE_MAX * O.slide_read;
+                    if (a > 0) rb_set_inst_real(O.df[e], SLOT_MY_ACCEL, a * m);
+                    rb_log("offtools: same slide again (lean %.2f) - weak-side edge rusher x%.2f acceleration", g_slide_lean, m);
+                } else O.slide_read = 0;
+            }
+            g_slide_lean += (side - g_slide_lean) * 0.25;
+        }
         O.prot = O.run_play ? PROT_NORMAL : g_prot;
         g_last_prot[0] = 0;
         if (O.prot) {
@@ -361,7 +384,9 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
         if (O.prot == PROT_MAX)
             snprintf(g_last_prot, sizeof g_last_prot, held ? "Max protect: your back picked up a rusher" : "Max protect: no free rusher came");
         else
-            snprintf(g_last_prot, sizeof g_last_prot, held ? "%s: that side held" : "%s: the rush came from the other side", PROT_NAME[O.prot]);
+            snprintf(g_last_prot, sizeof g_last_prot,
+                     O.slide_read > 0.15 ? "%s again: they sent speed off the other edge" : held ? "%s: that side held" : "%s: the rush came from the other side",
+                     PROT_NAME[O.prot]);
         rb_log("offtools: %s%s (rushers held for %d frames, %.1f s to %s)", g_last_prot, st == 11 ? " - sacked anyway" : "",
                O.prot_frames, (O.t - O.t_snap) / 60.0, st == 3 ? "throw" : st == 5 ? "scramble" : "sack");
     }
@@ -430,7 +455,7 @@ static int protect(CInstance *player, double x, double y, int is_def) {
     }
     if (O.prot == PROT_MAX && player == O.rb) {
         // the free rusher closest to the QB; meet him a few steps out, between him and the QB
-        int best = -1; double bd = 170, bx = 0, by = 0;
+        int best = -1, btaken = 0; double bd = 170, bx = 0, by = 0;
         for (int k = 0; k < O.ndf; k++) {
             double dx = rb_get_builtin_real(O.df[k], SLOT_X), dy = rb_get_builtin_real(O.df[k], SLOT_Y);
             if (dx < -9000) continue;
@@ -438,10 +463,13 @@ static int protect(CInstance *player, double x, double y, int is_def) {
             for (int j = 0; j < O.nol && !taken; j++)
                 taken = hypot(rb_get_builtin_real(O.ol[j], SLOT_X) - dx, rb_get_builtin_real(O.ol[j], SLOT_Y) - dy) < BLOCK_REACH;
             double d = hypot(dx - qx, dy - qy) + (taken ? 60 : 0);
-            if (d < bd) { bd = d; best = k; bx = dx; by = dy; }
+            if (d < bd) { bd = d; best = k; bx = dx; by = dy; btaken = taken; }
         }
         if (best >= 0) {
-            double d = hypot(bx - qx, by - qy), out = d * 0.6 < 34 ? d * 0.6 : 34;
+            // a free rusher: meet him a few steps out. One a lineman already has: go and help on him
+            // (the back used to wait by the QB for a free man who rarely came).
+            double d = hypot(bx - qx, by - qy), out = btaken ? d - 10 : (d * 0.6 < 34 ? d * 0.6 : 34);
+            if (out < 0) out = 0;
             steer(player, x, y, qx + (bx - qx) / d * out, qy + (by - qy) / d * out, 1.0);
         } else steer(player, x, y, qx - O.fwd * 4, qy + (y < qy ? -24 : 24), 0.6);   // nobody free: set up beside the QB
         return 1;
@@ -501,4 +529,6 @@ void rb_off_forget(void) { O.ball = 0; O.qb = O.rb = 0; O.nol = O.ndf = O.nrcv =
 void rb_off_cpu_drive(void) {
     if (g_legs < 1.0) { rb_log("offtools: other team has the ball - back fresh for your next drive (was %.0f%%)", g_legs * 100); g_legs = 1.0; }
 }
+// the real line of scrimmage this play (x), or a huge negative before it is known
+double rb_off_los(void) { return O.ball && O.fwd ? O.los : -1e9; }
 int rb_off_scrambled(void) { return O.ball && O.scrambled; }
