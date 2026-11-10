@@ -48,7 +48,7 @@ static struct {
     char note[96];
     CInstance *df[16]; double dfx[16]; int ndf, rusher[16];
     CInstance *ol[8]; double ol_d[8], front, rb_d; int nol;                                    // interior linemen (protection calls)
-    int legs_done; double slide_read; int prot, prot_frames, prot_noted;                            // this play's protection, how long it held someone up
+    int fingers; int legs_done; double slide_read; int prot, prot_frames, prot_noted;                            // this play's protection, how long it held someone up
 } O;
 
 // Protection call. It stays as set from play to play (shown on the button) until changed.
@@ -399,14 +399,27 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
             O.pump_shown = 1;
         }
         // or a second finger anywhere on the screen
-        static void *f_pressed;
-        if (!f_pressed) f_pressed = rb_builtin("device_mouse_check_button_pressed");
-        double a[2] = { 1, 1 };                                        // device 1 (second finger), mb_left
-        if (f_pressed && rb_call(f_pressed, ball, 2, a) > 0.5 && !g_ev_pump) { g_ev_pump = 1; rb_log("offtools: second-finger tap"); }
-    } else if (O.pump_shown) { rb_ui_panel_close(RB_PANEL_PUMP); O.pump_shown = 0; }
+        // The engine's "pressed this step" flag for the second finger never once fired in any log, so
+        // watch the held state of every extra finger and catch the moment one goes down ourselves.
+        static void *f_held;
+        if (!f_held) f_held = rb_builtin("device_mouse_check_button");
+        int down = 0;
+        for (int dev = 1; f_held && dev <= 3; dev++) {
+            double a[2] = { dev, 1 };                                  // finger dev+1, mb_left
+            if (rb_call(f_held, ball, 2, a) > 0.5) down |= 1 << dev;
+        }
+        if ((down & ~O.fingers) && !g_ev_pump) { g_ev_pump = 2; rb_log("offtools: extra finger down (mask %d)", down); }
+        O.fingers = down;
+    } else {
+        O.fingers = 0;
+        if (O.pump_shown) { rb_ui_panel_close(RB_PANEL_PUMP); O.pump_shown = 0; }
+    }
     if (g_ev_pump) {
         int e = g_ev_pump; g_ev_pump = 0;
         if (O.pump_shown) { rb_ui_panel_close(RB_PANEL_PUMP); O.pump_shown = 0; }
+        if (e > 0 && !(st == 2 && O.t >= O.pump_until + 8))            // say why a tap did nothing
+            rb_log("offtools: pump %s ignored - %s", e == 2 ? "finger" : "button",
+                   st != 2 ? "not aiming any more" : "still in the last pump");
         if (e > 0 && st == 2 && O.t >= O.pump_until + 8) {          // (button and finger can both fire for one tap)
             double qx = rb_get_builtin_real(ball, SLOT_X), qy = rb_get_builtin_real(ball, SLOT_Y);
             double dir = rb_get_inst_real(ball, SLOT_DIREC) / 57.29577951308232;   // aim, screen degrees
@@ -417,6 +430,7 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
             if (R < 60) R = 60;
             O.plx = qx + cos(dir) * R; O.ply = qy + sin(dir) * R;
             O.pump_until = O.t + PUMP_FRAMES; O.pumps++;
+            rb_log("offtools: pump (%s) registered", e == 2 ? "finger" : "button");
             rb_log("offtools: pump fake %d toward %.0f,%.0f (aim %.0f deg, %.0f px)", O.pumps, O.plx, O.ply, dir * 57.3, R);
         }
     }
