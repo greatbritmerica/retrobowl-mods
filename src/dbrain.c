@@ -22,6 +22,7 @@ static struct {
     double lx, ly, bx0, by0, down, togo; int zone, scored, pend; unsigned t, t_throw;
     CInstance *rcv;                 // intended receiver (offense player nearest the landing spot)
     int tip, tipped, whiff_logged;      // not an undercut: the defender in the way bats it down (or misses it)
+    int play; double jdir; unsigned t_catch;    // this throw: PLAY_*; the going defender's heading; when it was caught
     int contest_done, broken;           // contested catch: rolled once per throw; knocked away
     int breakup;                        // this throw: the closing defender plays the ball (incompletion)
     double close;                       // how late the closing defender is this throw (0-1)
@@ -220,6 +221,7 @@ void rb_dlearn_step(CInstance *ball, CInstance *other, int human_offense) {
         P.bx0 = bx; P.by0 = by;
         P.kind = 1; P.t_throw = P.t; P.pend = 1; P.zone = -1; P.rcv = 0;
         P.late = rb_off_pa_bite(); P.undercut = -1; P.jumper = 0; P.tip = P.tipped = P.whiff_logged = 0; P.breakup = 0; P.contest_done = P.broken = 0;
+    } else if (P.prev_st == 3 && st == 5 && P.kind == 1) { P.t_catch = P.t;  // caught
     } else if (st == 19 || (P.prev_st == 2 && st == 5)) P.kind = 2;         // handoff or QB run
     else if (!P.scored && (st == 4 || st == 6 || st == 7 || st == 9)) {
         P.scored = 1;
@@ -247,26 +249,36 @@ static double dir_to(double fx, double fy, double tx, double ty) {
 #define SLOT_HEIGHT     0x100fa5c18ULL     // ball: height off the ground
 #define VA_S_DROP_BALL  0x100395780ULL     // gml_Script_s_drop_ball(false), run as the player: the game's own tipped pass
 
+#define WHIFF_FRAMES     20      // after a miss the defender overruns the catch this long (1/3 s)
 #define CONTEST_REACH    28.0    // defender this close to the receiver at the catch: contested
-#define CONTEST_BREAKUP  30      // % of contested catches knocked away
 
 // One decision per throw. Most reads end with the defender arriving AT the catch (a hit, a breakup, a
 // short gain); getting in front of the ball for a pick takes a well-known route and some luck.
+// What the defender who goes for the ball does with it, decided once per throw. He ALWAYS goes for it;
+// the difference is how it turns out.
+enum { PLAY_PICK, PLAY_WHIFF, PLAY_BREAKUP, PLAY_HIT };
+static const char *PLAY_NAME[] = { "PICK ATTEMPT - gets in front of it", "goes for it and whiffs", "gets a hand in (breakup)", "arrives with the ball (hit at the catch)" };
 static void decide_read(void) {
     if (P.undercut >= 0) return;
     double f = P.zone >= 0 ? familiarity(P.zone) : 0;
     if (f > 0.85) f = 0.85;
-    double p = (0.12 + 0.33 * f) * (1.0 - P.late);
-    P.undercut = arc4random_uniform(1000) < (unsigned)(p * 1000);
-    P.close = arc4random_uniform(1000) / 1000.0;                        // 0 = on the receiver at the catch ... 1 = two steps late
-    P.tip = arc4random_uniform(100) < 50;
-    P.breakup = 0;                                                      // (planned breakups: replaced by contested catches)                               // (70% from anywhere gave 11 in 37 throws; 40% at the catch only gave 1 in 36)
-    rb_log("dbrain: read on this throw - %s (pick chance %.0f%%, familiarity %.2f%s)",
-           P.undercut ? "UNDERCUT, a pick is on" : P.tip ? "no pick: a defender in the way bats it down" : "no pick: a defender in the way misses it",
-           p * 100, f, P.late > 0 ? ", late from play action" : "");
-    if (!P.undercut) rb_log("dbrain: the defender closing on the catch is %s (%.2f)%s",
-                            P.close < 0.33 ? "right there" : P.close < 0.66 ? "a step late" : "two steps late", P.close,
-                            P.breakup ? " - going for the breakup" : "");
+    double p = (0.12 + 0.33 * f) * (1.0 - P.late);                      // a pick takes a well-known route and some luck
+    // Otherwise he misses about half the time (a bit less against tight coverage, more against loose),
+    // and when he doesn't miss it is a breakup 4 times in 10, a hit on the receiver the rest.
+    double whiff = 0.70 - 0.35 * rb_dbrain_pass_dial();
+    if (whiff < 0.35) whiff = 0.35;
+    if (whiff > 0.65) whiff = 0.65;
+    whiff += 0.25 * P.late;                                             // fooled by play action: misses more
+    double u = arc4random_uniform(10000) / 10000.0;
+    if (u < p) P.play = PLAY_PICK;
+    else {
+        u = arc4random_uniform(10000) / 10000.0;
+        P.play = u < whiff ? PLAY_WHIFF : arc4random_uniform(100) < 40 ? PLAY_BREAKUP : PLAY_HIT;
+    }
+    P.undercut = P.play == PLAY_PICK;
+    P.tip = P.play == PLAY_BREAKUP;
+    rb_log("dbrain: read on this throw - %s (pick chance %.0f%%, whiff chance %.0f%%, familiarity %.2f%s)",
+           PLAY_NAME[P.play], p * 100, whiff * 100, f, P.late > 0 ? ", late from play action" : "");
 }
 
 // Before the game's own ball-contact check runs for a player. The base game hands any defender who is
@@ -291,12 +303,14 @@ int rb_dbrain_ball_contact(CInstance *player, CInstance *other) {
         if (trav < 50 || (P.zone >= 0 && trav < 0.5 * hypot(P.lx - P.bx0, P.ly - P.by0))) return 0;
         if (P.contest_done) return 0;
         P.contest_done = 1;
+        decide_read();
         NearCtx n = { rb_get_builtin_real(player, SLOT_X), rb_get_builtin_real(player, SLOT_Y), 1e9, 0 };
         RValue r = rb_obj_ref(OBJ_PLAYER_DF);
         rb_with(&r, player, other, near_cb, &n);
         if (!n.best || n.bd > CONTEST_REACH) { rb_log("dbrain: open catch (nearest defender %.0f px away)", n.bd); return 0; }
-        int broke = arc4random_uniform(100) < CONTEST_BREAKUP;
-        rb_log("dbrain: contested catch (defender %.0f px away) - %s", n.bd, broke ? "BROKEN UP" : "receiver holds on");
+        int broke = P.play == PLAY_BREAKUP && !P.tipped;
+        rb_log("dbrain: contested catch (defender %.0f px away) - %s", n.bd,
+               broke ? "BROKEN UP" : P.play == PLAY_WHIFF ? "defender whiffs, receiver has it" : "receiver holds on");
         if (!broke) return 0;
         P.broken = P.tipped = 1;
         RValue no = {0}; no.kind = RV_BOOL;
@@ -339,42 +353,45 @@ void rb_dlearn_after_ai(CInstance *player) {
     if (st == 3 && P.kind == 1 && P.zone >= 0) {                       // ball in the air (landing known)
         double f = familiarity(P.zone);
         if (f > 0.85) f = 0.85;                                         // no defense reads a route perfectly
-        double D = rb_dbrain_pass_dial();                               // balance: aim for ~50% of passes stopped
-        double radius = (80 + 110 * f) * (0.3 + 0.9 * D);              // reads from further away
-        unsigned delay = (unsigned)((12 - 8 * f) * (1.6 - D));          // and sooner
-        // A defense that stepped up for the run fake is late and short on the throw behind it - for the
-        // whole play, not just the half second of the fake.
-        radius *= 1.0 - 0.55 * P.late;
-        delay += (unsigned)(34 * P.late);
+        double D = rb_dbrain_pass_dial();
+        // The defender nearest to where the ball is coming down always turns and goes for it (it used to
+        // depend on how close he started, and on most throws he trailed to a spot behind the receiver,
+        // which read as a defender ignoring the ball). What the balance moves now is how soon he reacts
+        // and how often he comes up empty.
+        double radius = 230 * (1.0 - 0.55 * P.late);
+        unsigned delay = (unsigned)((12 - 8 * f) * (1.6 - D)) + (unsigned)(34 * P.late);
         decide_read();
         double dist = hypot(P.lx - x, P.ly - y);
         if (P.rcv && P.t - P.t_throw >= delay && dist < radius) {
-            // Only one defender reads the throw (the closest to where it lands). A whole secondary
-            // converging on the catch turned contested balls into interceptions far too often.
-            if (P.jumper && P.jumper != player) {
+            if (P.jumper && P.jumper != player) {                       // one man goes: the closest
                 double jx = rb_get_builtin_real(P.jumper, SLOT_X), jy = rb_get_builtin_real(P.jumper, SLOT_Y);
                 if (jx > -9000 && hypot(P.lx - jx, P.ly - jy) <= dist) return;
             }
             P.jumper = player;
             double rx = rb_get_builtin_real(P.rcv, SLOT_X), ry = rb_get_builtin_real(P.rcv, SLOT_Y);
-            if (rx > -9000) {                                           // jump the route: go to the receiver
+            if (rx > -9000) {
+                // at the ball: a step in front of the receiver, in the ball's path. Only the man who is
+                // going to arrive with it (a hit) aims just behind the receiver instead.
+                double fx = P.lx - P.bx0, fy = P.ly - P.by0, fl = hypot(fx, fy);
+                double lag = P.play == PLAY_HIT ? 12 : -8;
                 double tx = rx, ty = ry;
-                double force = 1.0;
-                if (!P.undercut) {                                      // the far side of the receiver: ball gets there first
-                    // How well he closes varies throw to throw: right there at the catch, a step late, or
-                    // two. (Always arriving with the ball meant over half of all catches were tackled on
-                    // the spot - 16 of 26 for under 2 yards after the catch.)
-                    double fx = P.lx - P.bx0, fy = P.ly - P.by0, fl = hypot(fx, fy);
-                    // breakup: a step in front of the receiver, into the ball's path. Otherwise behind him,
-                    // a little further back than before so fewer catches are dead on arrival.
-                    double lag = P.breakup ? -8 : 28 + 60 * P.close;
-                    if (fl > 1) { tx += fx / fl * lag; ty += fy / fl * lag; }
-                    force = P.breakup ? 1.0 : 1.0 - 0.35 * P.close;
+                if (fl > 1) {
+                    tx += fx / fl * lag; ty += fy / fl * lag;
+                    if (P.play == PLAY_WHIFF) {                         // the miss: he flashes across in front of the
+                        double px = -fy / fl * 20, py = fx / fl * 20;   // receiver, a body-width off, and sails by
+                        if (hypot(tx + px - x, ty + py - y) > hypot(tx - px - x, ty - py - y)) { px = -px; py = -py; }
+                        tx += px; ty += py;
+                    }
                 }
-                rb_set_inst_real(player, SLOT_JDIR, dir_to(x, y, tx, ty));
-                rb_set_inst_real(player, SLOT_JFORCE, force);
+                if (hypot(tx - x, ty - y) > 6) P.jdir = dir_to(x, y, tx, ty);   // (keep his heading once he's on the spot)
+                rb_set_inst_real(player, SLOT_JDIR, P.jdir);
+                rb_set_inst_real(player, SLOT_JFORCE, 1.0);
             }
         }
+    } else if (st == 5 && P.kind == 1 && P.play == PLAY_WHIFF && player == P.jumper && P.t - P.t_catch < WHIFF_FRAMES) {
+        // he went for the ball and missed: his momentum carries him past the receiver for a moment
+        rb_set_inst_real(player, SLOT_JDIR, P.jdir);
+        rb_set_inst_real(player, SLOT_JFORCE, 1.0);
     } else if (st == 5 && P.kind == 2) {                                // run: only if the player lives off it
         double a = run_alert() * (0.4 + 0.8 * rb_dbrain_run_dial());
         if (a <= 0) return;
