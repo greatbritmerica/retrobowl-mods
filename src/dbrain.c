@@ -22,6 +22,7 @@ static struct {
     double lx, ly, bx0, by0, down, togo; int zone, scored, pend; unsigned t, t_throw;
     CInstance *rcv;                 // intended receiver (offense player nearest the landing spot)
     int tip, tipped, whiff_logged;      // not an undercut: the defender in the way bats it down (or misses it)
+    int contest_done, broken;           // contested catch: rolled once per throw; knocked away
     int breakup;                        // this throw: the closing defender plays the ball (incompletion)
     double close;                       // how late the closing defender is this throw (0-1)
     int undercut;                       // this throw: the reader gets in front of it (pick chance) vs arrives at the catch
@@ -218,7 +219,7 @@ void rb_dlearn_step(CInstance *ball, CInstance *other, int human_offense) {
     if (P.prev_st == 2 && st == 3) {                            // thrown: predict where it lands
         P.bx0 = bx; P.by0 = by;
         P.kind = 1; P.t_throw = P.t; P.pend = 1; P.zone = -1; P.rcv = 0;
-        P.late = rb_off_pa_bite(); P.undercut = -1; P.jumper = 0; P.tip = P.tipped = P.whiff_logged = 0; P.breakup = 0;
+        P.late = rb_off_pa_bite(); P.undercut = -1; P.jumper = 0; P.tip = P.tipped = P.whiff_logged = 0; P.breakup = 0; P.contest_done = P.broken = 0;
     } else if (st == 19 || (P.prev_st == 2 && st == 5)) P.kind = 2;         // handoff or QB run
     else if (!P.scored && (st == 4 || st == 6 || st == 7 || st == 9)) {
         P.scored = 1;
@@ -246,6 +247,9 @@ static double dir_to(double fx, double fy, double tx, double ty) {
 #define SLOT_HEIGHT     0x100fa5c18ULL     // ball: height off the ground
 #define VA_S_DROP_BALL  0x100395780ULL     // gml_Script_s_drop_ball(false), run as the player: the game's own tipped pass
 
+#define CONTEST_REACH    28.0    // defender this close to the receiver at the catch: contested
+#define CONTEST_BREAKUP  30      // % of contested catches knocked away
+
 // One decision per throw. Most reads end with the defender arriving AT the catch (a hit, a breakup, a
 // short gain); getting in front of the ball for a pick takes a well-known route and some luck.
 static void decide_read(void) {
@@ -256,10 +260,7 @@ static void decide_read(void) {
     P.undercut = arc4random_uniform(1000) < (unsigned)(p * 1000);
     P.close = arc4random_uniform(1000) / 1000.0;                        // 0 = on the receiver at the catch ... 1 = two steps late
     P.tip = arc4random_uniform(100) < 50;
-    // A defender who is right there can play the ball instead of the man: he gets a hand in and it falls
-    // incomplete. (87% of throws were being caught, with nearly every stop a catch-and-instant-tackle.)
-    P.breakup = !P.undercut && P.close < 0.33 && arc4random_uniform(100) < 45;
-    if (P.breakup) P.tip = 1;                               // (70% from anywhere gave 11 in 37 throws; 40% at the catch only gave 1 in 36)
+    P.breakup = 0;                                                      // (planned breakups: replaced by contested catches)                               // (70% from anywhere gave 11 in 37 throws; 40% at the catch only gave 1 in 36)
     rb_log("dbrain: read on this throw - %s (pick chance %.0f%%, familiarity %.2f%s)",
            P.undercut ? "UNDERCUT, a pick is on" : P.tip ? "no pick: a defender in the way bats it down" : "no pick: a defender in the way misses it",
            p * 100, f, P.late > 0 ? ", late from play action" : "");
@@ -277,8 +278,33 @@ void rb_dbrain_forget(void) { P.ball = 0; P.rcv = 0; P.jumper = 0; P.kind = 0; }
 int rb_dbrain_ball_contact(CInstance *player, CInstance *other) {
     if (!P.ball || !P.extreme || P.kind != 1) return 0;
     if (rb_get_inst_real(P.ball, SLOT_STATE) != 3) return 0;
-    if (rb_get_inst_real(player, SLOT_OFFENSE) > 0.5) return 0;        // receivers: untouched
     if (rb_get_obj_real(OBJ_CONTROLLER, SLOT_KICKING) > 0.5) return 0;  // field goals and punts: untouched
+    if (rb_get_inst_real(player, SLOT_OFFENSE) > 0.5) {
+        // A receiver about to make the catch. If a defender is physically on him at that moment, the
+        // catch is contested: some of those are broken up (the defender gets a hand in, the game's own
+        // tipped-pass routine). Decided once per throw, from where the players really are - planning a
+        // breakup at the throw didn't work, the defender was hardly ever actually there.
+        if (P.broken) return 1;                                         // already knocked away: nobody on offense catches it
+        if (rb_get_inst_real(player, SLOT_BALLDIST) > 20) return 0;
+        double bx = rb_get_builtin_real(P.ball, SLOT_X), by = rb_get_builtin_real(P.ball, SLOT_Y);
+        double trav = hypot(bx - P.bx0, by - P.by0);
+        if (trav < 50 || (P.zone >= 0 && trav < 0.5 * hypot(P.lx - P.bx0, P.ly - P.by0))) return 0;
+        if (P.contest_done) return 0;
+        P.contest_done = 1;
+        NearCtx n = { rb_get_builtin_real(player, SLOT_X), rb_get_builtin_real(player, SLOT_Y), 1e9, 0 };
+        RValue r = rb_obj_ref(OBJ_PLAYER_DF);
+        rb_with(&r, player, other, near_cb, &n);
+        if (!n.best || n.bd > CONTEST_REACH) { rb_log("dbrain: open catch (nearest defender %.0f px away)", n.bd); return 0; }
+        int broke = arc4random_uniform(100) < CONTEST_BREAKUP;
+        rb_log("dbrain: contested catch (defender %.0f px away) - %s", n.bd, broke ? "BROKEN UP" : "receiver holds on");
+        if (!broke) return 0;
+        P.broken = P.tipped = 1;
+        RValue no = {0}; no.kind = RV_BOOL;
+        RValue *av[1] = { &no };
+        RValue res = {0}; res.kind = RV_UNDEFINED;
+        ((GMLScript)RB(VA_S_DROP_BALL))(n.best, other, &res, 1, av);
+        return 1;
+    }
     if (rb_get_inst_real(player, SLOT_BALLDIST) > 20) return 0;         // not in reach: the game does nothing either
     double bx = rb_get_builtin_real(P.ball, SLOT_X), by = rb_get_builtin_real(P.ball, SLOT_Y);
     double trav = hypot(bx - P.bx0, by - P.by0);
