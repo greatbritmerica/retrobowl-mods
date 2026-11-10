@@ -152,13 +152,18 @@ static void cpu_fourth_action(CInstance *self, CInstance *other) {
 
 static double g_def_mult = 1.0;     // the burst boost the CPU defense got this play
 static int holder_cb(CInstance *inst, void *ctx) { *(CInstance **)ctx = inst; return 1; }
+static int fastest_cb(CInstance *inst, void *ctx) {
+    double a = rb_get_inst_real(inst, SLOT_MY_ACCEL), *best = ctx;
+    if (a > *best && a < 100) *best = a;
+    return 0;
+}
 
 // An interception: the defender who caught it keeps his Extreme burst boost as a ball carrier, and none
 // of your players has one - returns were running ~2.1-3.0 px/frame against ~1.3-1.7 for your own
 // carriers, so nobody could run him down. With the ball in his hands he is an ordinary player again.
 static void int_return_fix(CInstance *ball, CInstance *other) {
     static CInstance *done;
-    if (ball == done || g_def_mult <= 1.01) return;
+    if (ball == done) return;
     RValue *h = rb_inst_var(ball, SLOT_HOLDER);
     CInstance *who = 0;
     if (h && h->kind != RV_UNDEFINED) { RValue c = *h; rb_with(&c, ball, other, holder_cb, &who); }
@@ -166,8 +171,17 @@ static void int_return_fix(CInstance *ball, CInstance *other) {
     done = ball;
     double a = rb_get_inst_real(who, SLOT_MY_ACCEL);
     if (a > 0 && a < 100) {
-        rb_set_inst_real(who, SLOT_MY_ACCEL, a / g_def_mult);
-        rb_log("int return: returner's burst boost removed (acceleration %.3f -> %.3f)", a, a / g_def_mult);
+        // Taking the boost off was not enough: defenders are simply quicker than your offense (about
+        // 0.17 against 0.12), and two returns still went 70 and 80 yards at ~2.3-2.5 px/frame with nobody
+        // able to close. Speed tracks this number, so the man with the ball is held just under your
+        // fastest offensive player: he can still gain ground, but somebody can run him down.
+        double fastest = 0;
+        RValue of = rb_obj_ref(OBJ_PLAYER_OF);
+        rb_with(&of, ball, other, fastest_cb, &fastest);
+        double na = a / g_def_mult;
+        if (fastest > 0 && na > fastest * 0.9) na = fastest * 0.9;
+        rb_set_inst_real(who, SLOT_MY_ACCEL, na);
+        rb_log("int return: returner slowed (acceleration %.3f -> %.3f; your fastest player %.3f)", a, na, fastest);
     }
 }
 
