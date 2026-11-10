@@ -7,6 +7,16 @@
 #include "dbrain.h"
 #include "offtools.h"
 
+// A ball that is out quickly beats the coverage's read: thrown within QUICK_FULL seconds of the snap the
+// defender has half his pick chance, misses more and reacts later; the bonus fades to nothing by
+// QUICK_NONE. (Quick throws were the worst results on the board - 5 of 11 worked - because nothing
+// here looked at when the ball came out, only where it went.) Throws after a scramble get none.
+#define QUICK_FULL       1.2
+#define QUICK_NONE       2.0
+#define QUICK_PICK_CUT   0.5
+#define QUICK_WHIFF      0.15
+#define QUICK_DELAY      8       // extra frames before he reacts
+
 #define DRAG_DECAY 0.986
 #define AIR_K      8.75
 #define PX_PER_YD  20.5
@@ -22,6 +32,7 @@ static struct {
     double lx, ly, bx0, by0, down, togo; int zone, scored, pend; unsigned t, t_throw;
     CInstance *rcv;                 // intended receiver (offense player nearest the landing spot)
     int tip, tipped, whiff_logged;      // not an undercut: the defender in the way bats it down (or misses it)
+    double quick;                       // 1 = thrown on time, 0 = held (or after a scramble)
     int play; double jdir; unsigned t_catch;    // this throw: PLAY_*; the going defender's heading; when it was caught
     int contest_done, broken;           // contested catch: rolled once per throw; knocked away
     int breakup;                        // this throw: the closing defender plays the ball (incompletion)
@@ -220,6 +231,9 @@ void rb_dlearn_step(CInstance *ball, CInstance *other, int human_offense) {
     if (P.prev_st == 2 && st == 3) {                            // thrown: predict where it lands
         P.bx0 = bx; P.by0 = by;
         P.kind = 1; P.t_throw = P.t; P.pend = 1; P.zone = -1; P.rcv = 0;
+        double held = rb_off_snap_seconds();
+        P.quick = held < 0 || rb_off_scrambled() ? 0 : held <= QUICK_FULL ? 1 : held >= QUICK_NONE ? 0 : (QUICK_NONE - held) / (QUICK_NONE - QUICK_FULL);
+        rb_log("dbrain: ball out %.1f s after the snap%s (quick-release factor %.2f)", held, rb_off_scrambled() ? ", after a scramble" : "", P.quick);
         P.late = rb_off_pa_bite(); P.undercut = -1; P.jumper = 0; P.tip = P.tipped = P.whiff_logged = 0; P.breakup = 0; P.contest_done = P.broken = 0;
     } else if (P.prev_st == 3 && st == 5 && P.kind == 1) { P.t_catch = P.t;  // caught
     } else if (st == 19 || (P.prev_st == 2 && st == 5)) P.kind = 2;         // handoff or QB run
@@ -263,12 +277,14 @@ static void decide_read(void) {
     double f = P.zone >= 0 ? familiarity(P.zone) : 0;
     if (f > 0.85) f = 0.85;
     double p = (0.12 + 0.33 * f) * (1.0 - P.late);                      // a pick takes a well-known route and some luck
+    p *= 1.0 - QUICK_PICK_CUT * P.quick;                                // out on time: the coverage hasn't read it yet
     // Otherwise he misses about half the time (a bit less against tight coverage, more against loose),
     // and when he doesn't miss it is a breakup 4 times in 10, a hit on the receiver the rest.
     double whiff = 0.70 - 0.35 * rb_dbrain_pass_dial();
     if (whiff < 0.35) whiff = 0.35;
     if (whiff > 0.65) whiff = 0.65;
     whiff += 0.25 * P.late;                                             // fooled by play action: misses more
+    whiff += QUICK_WHIFF * P.quick;                                     // and against a quick release
     double u = arc4random_uniform(10000) / 10000.0;
     if (u < p) P.play = PLAY_PICK;
     else {
@@ -277,8 +293,9 @@ static void decide_read(void) {
     }
     P.undercut = P.play == PLAY_PICK;
     P.tip = P.play == PLAY_BREAKUP;
-    rb_log("dbrain: read on this throw - %s (pick chance %.0f%%, whiff chance %.0f%%, familiarity %.2f%s)",
-           PLAY_NAME[P.play], p * 100, whiff * 100, f, P.late > 0 ? ", late from play action" : "");
+    rb_log("dbrain: read on this throw - %s (pick chance %.0f%%, whiff chance %.0f%%, familiarity %.2f%s%s)",
+           PLAY_NAME[P.play], p * 100, whiff * 100, f, P.late > 0 ? ", late from play action" : "",
+           P.quick > 0.99 ? ", quick release" : P.quick > 0 ? ", fairly quick release" : "");
 }
 
 // Before the game's own ball-contact check runs for a player. The base game hands any defender who is
@@ -359,7 +376,7 @@ void rb_dlearn_after_ai(CInstance *player) {
         // which read as a defender ignoring the ball). What the balance moves now is how soon he reacts
         // and how often he comes up empty.
         double radius = 230 * (1.0 - 0.55 * P.late);
-        unsigned delay = (unsigned)((12 - 8 * f) * (1.6 - D)) + (unsigned)(34 * P.late);
+        unsigned delay = (unsigned)((12 - 8 * f) * (1.6 - D)) + (unsigned)(34 * P.late) + (unsigned)(QUICK_DELAY * P.quick);
         decide_read();
         double dist = hypot(P.lx - x, P.ly - y);
         if (P.rcv && P.t - P.t_throw >= delay && dist < radius) {

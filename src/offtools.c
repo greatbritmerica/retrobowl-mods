@@ -545,4 +545,6 @@ void rb_off_cpu_drive(void) {
 }
 // the real line of scrimmage this play (x), or a huge negative before it is known
 double rb_off_los(void) { return O.ball && O.fwd ? O.los : -1e9; }
+// seconds since the snap on your pass play (-1 when there is none)
+double rb_off_snap_seconds(void) { return O.ball && O.t_snap ? (O.t - O.t_snap) / 60.0 : -1; }
 int rb_off_scrambled(void) { return O.ball && O.scrambled; }
