@@ -22,6 +22,7 @@ static struct {
     double lx, ly, bx0, by0, down, togo; int zone, scored, pend; unsigned t, t_throw;
     CInstance *rcv;                 // intended receiver (offense player nearest the landing spot)
     int tip, tipped, whiff_logged;      // not an undercut: the defender in the way bats it down (or misses it)
+    int breakup;                        // this throw: the closing defender plays the ball (incompletion)
     double close;                       // how late the closing defender is this throw (0-1)
     int undercut;                       // this throw: the reader gets in front of it (pick chance) vs arrives at the catch
     double late;                        // play-action bite: the secondary reads the throw late
@@ -217,7 +218,7 @@ void rb_dlearn_step(CInstance *ball, CInstance *other, int human_offense) {
     if (P.prev_st == 2 && st == 3) {                            // thrown: predict where it lands
         P.bx0 = bx; P.by0 = by;
         P.kind = 1; P.t_throw = P.t; P.pend = 1; P.zone = -1; P.rcv = 0;
-        P.late = rb_off_pa_bite(); P.undercut = -1; P.jumper = 0; P.tip = P.tipped = P.whiff_logged = 0;
+        P.late = rb_off_pa_bite(); P.undercut = -1; P.jumper = 0; P.tip = P.tipped = P.whiff_logged = 0; P.breakup = 0;
     } else if (st == 19 || (P.prev_st == 2 && st == 5)) P.kind = 2;         // handoff or QB run
     else if (!P.scored && (st == 4 || st == 6 || st == 7 || st == 9)) {
         P.scored = 1;
@@ -254,12 +255,17 @@ static void decide_read(void) {
     double p = (0.12 + 0.33 * f) * (1.0 - P.late);
     P.undercut = arc4random_uniform(1000) < (unsigned)(p * 1000);
     P.close = arc4random_uniform(1000) / 1000.0;                        // 0 = on the receiver at the catch ... 1 = two steps late
-    P.tip = arc4random_uniform(100) < 50;                               // (70% from anywhere gave 11 in 37 throws; 40% at the catch only gave 1 in 36)
+    P.tip = arc4random_uniform(100) < 50;
+    // A defender who is right there can play the ball instead of the man: he gets a hand in and it falls
+    // incomplete. (87% of throws were being caught, with nearly every stop a catch-and-instant-tackle.)
+    P.breakup = !P.undercut && P.close < 0.33 && arc4random_uniform(100) < 45;
+    if (P.breakup) P.tip = 1;                               // (70% from anywhere gave 11 in 37 throws; 40% at the catch only gave 1 in 36)
     rb_log("dbrain: read on this throw - %s (pick chance %.0f%%, familiarity %.2f%s)",
            P.undercut ? "UNDERCUT, a pick is on" : P.tip ? "no pick: a defender in the way bats it down" : "no pick: a defender in the way misses it",
            p * 100, f, P.late > 0 ? ", late from play action" : "");
-    if (!P.undercut) rb_log("dbrain: the defender closing on the catch is %s (%.2f)",
-                            P.close < 0.33 ? "right there" : P.close < 0.66 ? "a step late" : "two steps late", P.close);
+    if (!P.undercut) rb_log("dbrain: the defender closing on the catch is %s (%.2f)%s",
+                            P.close < 0.33 ? "right there" : P.close < 0.66 ? "a step late" : "two steps late", P.close,
+                            P.breakup ? " - going for the breakup" : "");
 }
 
 // Before the game's own ball-contact check runs for a player. The base game hands any defender who is
@@ -333,9 +339,11 @@ void rb_dlearn_after_ai(CInstance *player) {
                     // two. (Always arriving with the ball meant over half of all catches were tackled on
                     // the spot - 16 of 26 for under 2 yards after the catch.)
                     double fx = P.lx - P.bx0, fy = P.ly - P.by0, fl = hypot(fx, fy);
-                    double lag = 16 + 60 * P.close;
+                    // breakup: a step in front of the receiver, into the ball's path. Otherwise behind him,
+                    // a little further back than before so fewer catches are dead on arrival.
+                    double lag = P.breakup ? -8 : 28 + 60 * P.close;
                     if (fl > 1) { tx += fx / fl * lag; ty += fy / fl * lag; }
-                    force = 1.0 - 0.35 * P.close;
+                    force = P.breakup ? 1.0 : 1.0 - 0.35 * P.close;
                 }
                 rb_set_inst_real(player, SLOT_JDIR, dir_to(x, y, tx, ty));
                 rb_set_inst_real(player, SLOT_JFORCE, force);
