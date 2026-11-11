@@ -339,6 +339,47 @@ code { font: 14px ui-monospace, Menlo, Consolas, monospace; background: var(--wa
     return p;
   }
 
+  // ---- reading a rules file back into the builder (the inverse of rulesText) ----
+  function parseRules(text, T) {
+    var keys = byKey(T), rules = [], skipped = 0, r = null;
+    function words(s) { return s.split(/\s+/); }
+    function rest(s, n) { var w = words(s); return w.slice(n).join(' '); }
+    String(text).split(/\r?\n/).forEach(function (raw) {
+      var line = raw.trim();
+      if (!line || line[0] === '#') return;
+      var w = words(line), k = w[0];
+      if (k === 'rule') { r = { name: oneLine(rest(line, 1), LIMITS.name), ev: 'presnap', arg: '', conds: [], acts: [] }; rules.push(r); return; }
+      if (!r) { skipped++; return; }
+      if (k === 'end') { r = null; return; }
+      if (k === 'when') { r.ev = w[1] || 'presnap'; r.arg = r.ev === 'button' ? oneLine(rest(line, 2), LIMITS.label) : ''; return; }
+      if (k === 'if' && w.length >= 4) {
+        var v = w[1], c = { op: w[2], val: Number(w[3]) };
+        if (v.indexOf('var.') === 0) { c.v = 'var'; c.name = v.slice(4); }
+        else if (v.indexOf('pressed.') === 0) { c.v = 'pressed'; c.name = v.slice(8).replace(/_/g, ' '); }
+        else c.v = v;
+        if (!VARS.some(function (x) { return x.id === c.v; }) || !isFinite(c.val)) { skipped++; return; }
+        r.conds.push(c); return;
+      }
+      if (k === 'then' && w.length >= 2) {
+        var t = w[1], a = { t: t };
+        if (t === 'tune') {
+          var tt = keys[w[2]]; if (!tt) { skipped++; return; }
+          a.key = w[2]; a.op = w[3]; a.val = Number(w[4]); a.keep = w[5] === 'keep';
+          if (tt.pct && a.op !== '*') a.val = Math.round(a.val * 100 * 1e4) / 1e4;   // the builder shows percents
+        } else if (t === 'speed') { a.group = w[2]; a.val = Number(w[3]); }
+        else if (t === 'legs') { a.op = w[2]; a.val = Number(w[3]); }
+        else if (t === 'var') { a.name = w[2]; a.op = w[3]; a.val = Number(w[4]); }
+        else if (t === 'push') { a.val = w.length > 2 ? Number(w[2]) : 100; }
+        else if (t === 'penalty') { a.val = Number(w[2]); a.replay = w[3] === 'replay'; }
+        else if (t === 'button' || t === 'msg') { a.text = rest(line, 2); }
+        else if (!ACTIONS.some(function (x) { return x.id === t; })) { skipped++; return; }
+        r.acts.push(a); return;
+      }
+      skipped++;
+    });
+    return { rules: rules, skipped: skipped };
+  }
+
   // ---- report: rbmod_plays.txt ----
   function parsePlays(text) {
     var plays = [];
@@ -403,7 +444,7 @@ code { font: 14px ui-monospace, Menlo, Consolas, monospace; background: var(--wa
   }
 
   var api = { EVENTS: EVENTS, VARS: VARS, OPS: OPS, GROUPS: GROUPS, ACTIONS: ACTIONS, LIMITS: LIMITS, ident: ident, oneLine: oneLine,
-              settingsText: settingsText, parseSettings: parseSettings, changed: changed, rulesText: rulesText, problems: problems,
+              settingsText: settingsText, parseSettings: parseSettings, parseRules: parseRules, changed: changed, rulesText: rulesText, problems: problems,
               parsePlays: parsePlays, splitGames: splitGames, summarize: summarize };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.WS = api;
 })(typeof window !== 'undefined' ? window : this);
@@ -729,10 +770,30 @@ code { font: 14px ui-monospace, Menlo, Consolas, monospace; background: var(--wa
     v.appendChild(h('p', { class: 'lede', text: 'A rule says when something happens, if certain things are true, then do this. The mod reads your rules at the start of every play.' }));
     var live = S.rules.filter(function (r) { return !r.off; }), bad = live.filter(function (r) { return WS.problems(r, S.rules, T).length; }).length;
     function text() { return WS.rulesText(S.rules.filter(function (r) { return r.off || !WS.problems(r, S.rules, T).length; }), T); }
-    var imp = null;
+    // Bring rules in from a file or pasted text. A rule with the same name as one you have replaces it,
+    // so an updated version of a set drops straight in over the old one.
+    function bring(textIn, from) {
+      var got = WS.parseRules(textIn, T), added = 0, replaced = 0;
+      if (!got.rules.length) { toast('No rules found in ' + from + '.'); return; }
+      got.rules.forEach(function (nr) {
+        nr.id = uid();
+        var i = -1;
+        S.rules.forEach(function (o, k) { if (i < 0 && WS.oneLine(o.name, L.name) === nr.name) i = k; });
+        if (i >= 0) { nr.off = S.rules[i].off; S.rules[i] = nr; replaced++; } else { S.rules.push(nr); added++; }
+      });
+      save(); renderRules(); tally();
+      toast((added ? added + ' added' : '') + (added && replaced ? ', ' : '') + (replaced ? replaced + ' replaced' : '') +
+            (got.skipped ? ' (' + got.skipped + ' lines skipped)' : '') + '. Save the rules file to use them.');
+    }
+    var imp = h('input', { type: 'file', id: 'imp-rules', accept: '.txt,text/plain', hidden: true, onchange: function () { readFile(imp, function (t, name) { bring(t, name); }); } });
     v.appendChild(h('div', { class: 'bar' }, fileButtons('rbmod_rules.txt', text).concat([
-      h('button', { class: 'btn', type: 'button', text: 'Add a rule', onclick: function () { if (S.rules.length >= L.rules) { toast('The mod reads up to ' + L.rules + ' rules.'); return; } S.rules.unshift(newRule()); save(); renderRules(); tally(); } })
+      h('button', { class: 'btn', type: 'button', text: 'Add a rule', onclick: function () { if (S.rules.length >= L.rules) { toast('The mod reads up to ' + L.rules + ' rules.'); return; } S.rules.unshift(newRule()); save(); renderRules(); tally(); } }),
+      h('button', { class: 'btn', type: 'button', text: 'Load rules from a file', onclick: function () { imp.click(); } }), imp
     ])));
+    var paste = h('textarea', { id: 'paste-rules', rows: 6, placeholder: 'rule My rule\nwhen presnap\n...\nend', 'aria-label': 'Rules text', style: 'width:100%;border:1px solid var(--line);border-radius:8px;padding:10px;background:var(--panel);font:13px/1.5 ui-monospace,Menlo,Consolas,monospace' });
+    v.appendChild(h('details', { class: 'raw', style: 'margin:-6px 0 14px' }, [h('summary', { text: 'Paste rules text' }),
+      h('p', { class: 'note', text: 'Paste rules you were sent. Any rule with the same name as one of yours replaces it; the rest are added.' }), paste,
+      h('div', { class: 'bar', style: 'margin-top:8px' }, [h('button', { class: 'btn go', type: 'button', text: 'Add these rules', onclick: function () { bring(paste.value, 'the pasted text'); } })])]));
     if (bad) v.appendChild(h('p', { class: 'note', text: bad + (bad === 1 ? ' rule needs' : ' rules need') + ' fixing and will be left out of the file until then.' }));
     if (buttonLabels().length > L.buttons) v.appendChild(h('p', { class: 'note', text: 'Your rules add more than ' + L.buttons + ' different buttons. The pre-snap panel shows the first ' + L.buttons + ' on any one play.' }));
     S.rules.forEach(function (r) { v.appendChild(ruleCard(r)); });

@@ -437,10 +437,30 @@ code { font: 14px ui-monospace, Menlo, Consolas, monospace; background: var(--wa
     v.appendChild(h('p', { class: 'lede', text: 'A rule says when something happens, if certain things are true, then do this. The mod reads your rules at the start of every play.' }));
     var live = S.rules.filter(function (r) { return !r.off; }), bad = live.filter(function (r) { return WS.problems(r, S.rules, T).length; }).length;
     function text() { return WS.rulesText(S.rules.filter(function (r) { return r.off || !WS.problems(r, S.rules, T).length; }), T); }
-    var imp = null;
+    // Bring rules in from a file or pasted text. A rule with the same name as one you have replaces it,
+    // so an updated version of a set drops straight in over the old one.
+    function bring(textIn, from) {
+      var got = WS.parseRules(textIn, T), added = 0, replaced = 0;
+      if (!got.rules.length) { toast('No rules found in ' + from + '.'); return; }
+      got.rules.forEach(function (nr) {
+        nr.id = uid();
+        var i = -1;
+        S.rules.forEach(function (o, k) { if (i < 0 && WS.oneLine(o.name, L.name) === nr.name) i = k; });
+        if (i >= 0) { nr.off = S.rules[i].off; S.rules[i] = nr; replaced++; } else { S.rules.push(nr); added++; }
+      });
+      save(); renderRules(); tally();
+      toast((added ? added + ' added' : '') + (added && replaced ? ', ' : '') + (replaced ? replaced + ' replaced' : '') +
+            (got.skipped ? ' (' + got.skipped + ' lines skipped)' : '') + '. Save the rules file to use them.');
+    }
+    var imp = h('input', { type: 'file', id: 'imp-rules', accept: '.txt,text/plain', hidden: true, onchange: function () { readFile(imp, function (t, name) { bring(t, name); }); } });
     v.appendChild(h('div', { class: 'bar' }, fileButtons('rbmod_rules.txt', text).concat([
-      h('button', { class: 'btn', type: 'button', text: 'Add a rule', onclick: function () { if (S.rules.length >= L.rules) { toast('The mod reads up to ' + L.rules + ' rules.'); return; } S.rules.unshift(newRule()); save(); renderRules(); tally(); } })
+      h('button', { class: 'btn', type: 'button', text: 'Add a rule', onclick: function () { if (S.rules.length >= L.rules) { toast('The mod reads up to ' + L.rules + ' rules.'); return; } S.rules.unshift(newRule()); save(); renderRules(); tally(); } }),
+      h('button', { class: 'btn', type: 'button', text: 'Load rules from a file', onclick: function () { imp.click(); } }), imp
     ])));
+    var paste = h('textarea', { id: 'paste-rules', rows: 6, placeholder: 'rule My rule\nwhen presnap\n...\nend', 'aria-label': 'Rules text', style: 'width:100%;border:1px solid var(--line);border-radius:8px;padding:10px;background:var(--panel);font:13px/1.5 ui-monospace,Menlo,Consolas,monospace' });
+    v.appendChild(h('details', { class: 'raw', style: 'margin:-6px 0 14px' }, [h('summary', { text: 'Paste rules text' }),
+      h('p', { class: 'note', text: 'Paste rules you were sent. Any rule with the same name as one of yours replaces it; the rest are added.' }), paste,
+      h('div', { class: 'bar', style: 'margin-top:8px' }, [h('button', { class: 'btn go', type: 'button', text: 'Add these rules', onclick: function () { bring(paste.value, 'the pasted text'); } })])]));
     if (bad) v.appendChild(h('p', { class: 'note', text: bad + (bad === 1 ? ' rule needs' : ' rules need') + ' fixing and will be left out of the file until then.' }));
     if (buttonLabels().length > L.buttons) v.appendChild(h('p', { class: 'note', text: 'Your rules add more than ' + L.buttons + ' different buttons. The pre-snap panel shows the first ' + L.buttons + ' on any one play.' }));
     S.rules.forEach(function (r) { v.appendChild(ruleCard(r)); });

@@ -156,6 +156,47 @@
     return p;
   }
 
+  // ---- reading a rules file back into the builder (the inverse of rulesText) ----
+  function parseRules(text, T) {
+    var keys = byKey(T), rules = [], skipped = 0, r = null;
+    function words(s) { return s.split(/\s+/); }
+    function rest(s, n) { var w = words(s); return w.slice(n).join(' '); }
+    String(text).split(/\r?\n/).forEach(function (raw) {
+      var line = raw.trim();
+      if (!line || line[0] === '#') return;
+      var w = words(line), k = w[0];
+      if (k === 'rule') { r = { name: oneLine(rest(line, 1), LIMITS.name), ev: 'presnap', arg: '', conds: [], acts: [] }; rules.push(r); return; }
+      if (!r) { skipped++; return; }
+      if (k === 'end') { r = null; return; }
+      if (k === 'when') { r.ev = w[1] || 'presnap'; r.arg = r.ev === 'button' ? oneLine(rest(line, 2), LIMITS.label) : ''; return; }
+      if (k === 'if' && w.length >= 4) {
+        var v = w[1], c = { op: w[2], val: Number(w[3]) };
+        if (v.indexOf('var.') === 0) { c.v = 'var'; c.name = v.slice(4); }
+        else if (v.indexOf('pressed.') === 0) { c.v = 'pressed'; c.name = v.slice(8).replace(/_/g, ' '); }
+        else c.v = v;
+        if (!VARS.some(function (x) { return x.id === c.v; }) || !isFinite(c.val)) { skipped++; return; }
+        r.conds.push(c); return;
+      }
+      if (k === 'then' && w.length >= 2) {
+        var t = w[1], a = { t: t };
+        if (t === 'tune') {
+          var tt = keys[w[2]]; if (!tt) { skipped++; return; }
+          a.key = w[2]; a.op = w[3]; a.val = Number(w[4]); a.keep = w[5] === 'keep';
+          if (tt.pct && a.op !== '*') a.val = Math.round(a.val * 100 * 1e4) / 1e4;   // the builder shows percents
+        } else if (t === 'speed') { a.group = w[2]; a.val = Number(w[3]); }
+        else if (t === 'legs') { a.op = w[2]; a.val = Number(w[3]); }
+        else if (t === 'var') { a.name = w[2]; a.op = w[3]; a.val = Number(w[4]); }
+        else if (t === 'push') { a.val = w.length > 2 ? Number(w[2]) : 100; }
+        else if (t === 'penalty') { a.val = Number(w[2]); a.replay = w[3] === 'replay'; }
+        else if (t === 'button' || t === 'msg') { a.text = rest(line, 2); }
+        else if (!ACTIONS.some(function (x) { return x.id === t; })) { skipped++; return; }
+        r.acts.push(a); return;
+      }
+      skipped++;
+    });
+    return { rules: rules, skipped: skipped };
+  }
+
   // ---- report: rbmod_plays.txt ----
   function parsePlays(text) {
     var plays = [];
@@ -220,7 +261,7 @@
   }
 
   var api = { EVENTS: EVENTS, VARS: VARS, OPS: OPS, GROUPS: GROUPS, ACTIONS: ACTIONS, LIMITS: LIMITS, ident: ident, oneLine: oneLine,
-              settingsText: settingsText, parseSettings: parseSettings, changed: changed, rulesText: rulesText, problems: problems,
+              settingsText: settingsText, parseSettings: parseSettings, parseRules: parseRules, changed: changed, rulesText: rulesText, problems: problems,
               parsePlays: parsePlays, splitGames: splitGames, summarize: summarize };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.WS = api;
 })(typeof window !== 'undefined' ? window : this);
