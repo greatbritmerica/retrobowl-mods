@@ -90,6 +90,8 @@ int rb_gate_attack(CInstance *self, int human_has_ball) {
 // game's own debug log (slog) -> rbmod.log
 static void fourth_check(const char *txt, const char *via);
 static int g_match_live;        // a ball has stepped since the match objects were last (re)built
+// Interception return: the man with the ball, and your eleven who have to get him down.
+static struct { CInstance *who, *ball; CInstance *of[12]; int nof; double px, py, vx, vy; } g_ret;
 RValue *hook_slog(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
     rb_input_install();
     char line[400]; int n = 0;
@@ -102,6 +104,7 @@ RValue *hook_slog(CInstance *self, CInstance *other, RValue *res, int argc, RVal
     if (!strncmp(line, "s_create_message[", 17)) fourth_check(line, "slog");
     if (!strncmp(line, "s_destroy_match_objects", 23)) {             // ball and players are about to be freed
         g_match_live = 0;
+        g_ret.who = 0; g_ret.nof = 0;
         rb_off_forget(); rb_dbrain_forget();
     }
     return ORIG(slog)(self, other, res, argc, argv);
@@ -150,11 +153,21 @@ static void cpu_fourth_action(CInstance *self, CInstance *other) {
     g_cpu_clearing = 0;
 }
 
+#define PURSUIT_BURST 1.25          // your players' burst while chasing an interception down
 static double g_def_mult = 1.0;     // the burst boost the CPU defense got this play
 static int holder_cb(CInstance *inst, void *ctx) { *(CInstance **)ctx = inst; return 1; }
 static int fastest_cb(CInstance *inst, void *ctx) {
     double a = rb_get_inst_real(inst, SLOT_MY_ACCEL), *best = ctx;
     if (a > *best && a < 100) *best = a;
+    return 0;
+}
+// your players on an interception: remember them, and they turn and chase flat out
+static int pursuer_cb(CInstance *inst, void *ctx) {
+    (void)ctx;
+    if (g_ret.nof >= 12) return 0;
+    g_ret.of[g_ret.nof++] = inst;
+    double a = rb_get_inst_real(inst, SLOT_MY_ACCEL);
+    if (a > 0 && a < 100) rb_set_inst_real(inst, SLOT_MY_ACCEL, a * PURSUIT_BURST);
     return 0;
 }
 
@@ -183,6 +196,13 @@ static void int_return_fix(CInstance *ball, CInstance *other) {
         rb_set_inst_real(who, SLOT_MY_ACCEL, na);
         rb_log("int return: returner slowed (acceleration %.3f -> %.3f; your fastest player %.3f)", a, na, fastest);
     }
+    // Slowing him was half of it. The other half: your offense barely chased - one return jogged 88
+    // yards over 21 seconds with nobody getting to him. Now all of them turn and run him down.
+    g_ret.who = who; g_ret.ball = ball; g_ret.nof = 0; g_ret.vx = g_ret.vy = 0;
+    g_ret.px = rb_get_builtin_real(who, SLOT_X); g_ret.py = rb_get_builtin_real(who, SLOT_Y);
+    RValue of2 = rb_obj_ref(OBJ_PLAYER_OF);
+    rb_with(&of2, ball, other, pursuer_cb, 0);
+    rb_log("int return: %d of your players in pursuit (x%.2f burst)", g_ret.nof, PURSUIT_BURST);
 }
 
 // ---- CPU athleticism: on Extreme the CPU's players get a burst boost every play (both sides of the ball)
@@ -240,7 +260,14 @@ RValue *hook_update_ball(CInstance *self, CInstance *other, RValue *res, int arg
     rb_def_step(self, other, cpu_offense, los, fwd, qbx, qby);
     rb_dlearn_step(self, other, human >= 0 && poss >= 0 && poss == human);
     double st = rb_get_inst_real(self, SLOT_STATE);
-    if (st == 9 && human >= 0 && !cpu_offense) int_return_fix(self, other);
+    if (st == 9 && human >= 0 && !cpu_offense) {
+        int_return_fix(self, other);
+        if (g_ret.who && g_ret.ball == self) {                      // where the returner is heading (smoothed)
+            double rx = rb_get_builtin_real(g_ret.who, SLOT_X), ry = rb_get_builtin_real(g_ret.who, SLOT_Y);
+            g_ret.vx += (rx - g_ret.px - g_ret.vx) * 0.2; g_ret.vy += (ry - g_ret.py - g_ret.vy) * 0.2;
+            g_ret.px = rx; g_ret.py = ry;
+        }
+    } else if (g_ret.who && g_ret.ball == self) g_ret.who = 0;     // he's down (or scored)
     if (st != g_last_state) {
         rb_log("ball f%u state %g -> %g  pos %.0f,%.0f vel %.2f dist %.1f %s",
                rb_frame, g_last_state, st, rb_get_builtin_real(self, SLOT_X), rb_get_builtin_real(self, SLOT_Y),
@@ -333,8 +360,25 @@ long hook_spr_draw(CInstance *self, long sprite, long colour, float sub, float x
 }
 
 // =============================================================== player control on defense
+// One of your players during an interception return: take the angle and go get him.
+static void int_pursuit(CInstance *p) {
+    if (!g_ret.who || !g_match_live || p == g_ret.who) return;
+    int mine = 0;
+    for (int i = 0; i < g_ret.nof; i++) if (g_ret.of[i] == p) { mine = 1; break; }
+    if (!mine) return;
+    double x = rb_get_builtin_real(p, SLOT_X), y = rb_get_builtin_real(p, SLOT_Y);
+    double d = hypot(g_ret.px - x, g_ret.py - y);
+    double lead = d / 2.4;                                          // frames until he could be reached
+    if (lead > 45) lead = 45;
+    double tx = g_ret.px + g_ret.vx * lead, ty = g_ret.py + g_ret.vy * lead;
+    double a = atan2(-(ty - y), tx - x) * 57.29577951308232;
+    rb_set_inst_real(p, SLOT_JDIR, a < 0 ? a + 360 : a);
+    rb_set_inst_real(p, SLOT_JFORCE, 1.0);
+}
+
 RValue *hook_get_destination(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
     RValue *r = ORIG(get_destination)(self, other, res, argc, argv);
+    int_pursuit(self);
     rb_defcall_after_ai(self);           // the call shapes the AI defenders...
     rb_def_after_ai(self);               // ...the player's own man stays his
     rb_dlearn_after_ai(self);
