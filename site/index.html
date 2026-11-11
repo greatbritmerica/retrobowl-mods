@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Retro Bowl Workshop</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Silkscreen:wght@400;700&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: a stadium scoreboard on top (the one loud thing), then quiet playbook pages below it. */
+:root {
+  --field: #edf1e6; --panel: #ffffff; --ink: #17211b; --muted: #5a685e; --line: #cdd6c6;
+  --turf: #1d6b3a; --turf-ink: #ffffff; --lamp: #a9670a; --flag: #b53722; --wash: #e3ead9;
+  --board: #101613; --board-ink: #f4f1e4; --board-lamp: #f5b63c; --board-dim: #7d8b80;
+  --display: "Silkscreen", "Courier New", monospace;
+  --body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --field: #0c1310; --panel: #141d18; --ink: #e3eade; --muted: #92a196; --line: #26342b;
+    --turf: #58c47c; --turf-ink: #07130c; --lamp: #f2b441; --flag: #ef6c54; --wash: #1a2620;
+    --board: #060a08; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --field: #0c1310; --panel: #141d18; --ink: #e3eade; --muted: #92a196; --line: #26342b;
+  --turf: #58c47c; --turf-ink: #07130c; --lamp: #f2b441; --flag: #ef6c54; --wash: #1a2620;
+  --board: #060a08; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--field); color: var(--ink); font: 400 16px/1.45 var(--body); -webkit-text-size-adjust: 100%; }
+button, input, select, textarea { font: inherit; color: inherit; }
+h1, h2, h3 { text-wrap: balance; margin: 0; }
+.wrap { max-width: 760px; margin: 0 auto; padding: 0 16px 64px; }
+
+/* scoreboard */
+.board { background: var(--board); color: var(--board-ink); padding: 18px 16px 0; }
+.board-in { max-width: 760px; margin: 0 auto; }
+.board h1 { font: 700 22px/1.1 var(--display); letter-spacing: .02em; }
+.board p { margin: 6px 0 14px; color: var(--board-dim); font-size: 14px; max-width: 52ch; }
+.tally { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: #26302a; border: 1px solid #26302a; }
+.tally div { background: var(--board); padding: 10px 8px 9px; text-align: center; }
+.tally b { display: block; font: 700 26px/1 var(--display); color: var(--board-lamp); font-variant-numeric: tabular-nums; }
+.tally b.bad { color: #ff7a5c; }
+.tally span { display: block; margin-top: 5px; font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--board-dim); }
+/* yard-line ticks: one long mark every fifth */
+.hash { height: 14px; margin-top: 14px; background:
+  repeating-linear-gradient(90deg, #f4f1e4 0 2px, transparent 2px 60px) 0 0 / 100% 14px no-repeat,
+  repeating-linear-gradient(90deg, #5d6a60 0 1px, transparent 1px 12px) 0 6px / 100% 8px no-repeat; }
+
+/* tabs */
+.tabs { position: sticky; top: 0; z-index: 5; background: var(--field); border-bottom: 1px solid var(--line); }
+.tabs-in { max-width: 760px; margin: 0 auto; padding: 0 8px; display: flex; gap: 2px; overflow-x: auto; }
+.tabs a { flex: 1 0 auto; text-align: center; padding: 13px 12px 11px; text-decoration: none; color: var(--muted); font-weight: 600; border-bottom: 3px solid transparent; white-space: nowrap; }
+.tabs a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--turf); }
+.tabs a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, textarea:focus-visible { outline: 2px solid var(--turf); outline-offset: 2px; }
+
+section.view { display: none; padding-top: 20px; }
+section.view.on { display: block; }
+.lede { color: var(--muted); max-width: 62ch; margin: 0 0 16px; }
+.bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 16px; }
+.btn { appearance: none; border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 10px 14px; min-height: 44px; font-weight: 600; cursor: pointer; }
+.btn.go { background: var(--turf); border-color: var(--turf); color: var(--turf-ink); }
+.btn.quiet { background: transparent; }
+.btn.small { min-height: 36px; padding: 6px 10px; font-size: 14px; }
+.btn.danger { color: var(--flag); }
+.btn[disabled] { opacity: .5; cursor: default; }
+.note { font-size: 14px; color: var(--muted); }
+.toast { position: fixed; left: 16px; right: 16px; bottom: 16px; max-width: 520px; margin: 0 auto; background: var(--board); color: var(--board-ink); padding: 12px 14px; border-radius: 10px; z-index: 20; font-weight: 500; }
+.toast[hidden] { display: none; }
+
+/* tuning */
+details.group { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 10px; }
+details.group > summary { list-style: none; cursor: pointer; padding: 13px 14px; display: flex; align-items: baseline; gap: 10px; font-weight: 700; }
+details.group > summary::-webkit-details-marker { display: none; }
+details.group > summary::after { content: "+"; margin-left: auto; color: var(--muted); font-weight: 500; }
+details.group[open] > summary::after { content: "\2212"; }
+details.group > summary i { font-style: normal; font-weight: 600; font-size: 13px; color: var(--lamp); }
+.rows { border-top: 1px solid var(--line); }
+.row { padding: 12px 14px; border-bottom: 1px solid var(--line); display: grid; gap: 6px; }
+.row:last-child { border-bottom: 0; }
+.row label { font-weight: 600; }
+.row .help { font-size: 14px; color: var(--muted); max-width: 60ch; }
+.ctl { display: flex; align-items: center; gap: 10px; }
+.ctl input[type=range] { flex: 1; min-width: 0; height: 32px; accent-color: var(--turf); }
+.numbox { display: flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 8px; padding: 0 8px; background: var(--field); }
+.numbox input { width: 62px; border: 0; background: transparent; padding: 8px 0; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.numbox span { color: var(--muted); font-size: 14px; min-width: 10px; }
+.row.changed label::after { content: "changed"; margin-left: 8px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--lamp); }
+.was { font-size: 13px; }
+.was button { appearance: none; border: 0; background: none; padding: 4px 0; color: var(--turf); font-weight: 600; cursor: pointer; text-decoration: underline; }
+.presets { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
+.presets input { flex: 1 1 150px; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; background: var(--panel); min-height: 40px; }
+.chip { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); overflow: hidden; }
+.chip button { appearance: none; border: 0; background: none; padding: 7px 10px; cursor: pointer; font-weight: 600; }
+.chip button + button { border-left: 1px solid var(--line); color: var(--muted); }
+
+/* rules */
+.rule { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--turf); border-radius: 10px; margin-bottom: 12px; }
+.rule.bad { border-left-color: var(--flag); }
+.rule.off { border-left-color: var(--line); opacity: .7; }
+.rule header { display: flex; gap: 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.rule header input { flex: 1; min-width: 0; border: 0; background: transparent; font-weight: 700; font-size: 17px; padding: 6px 2px; }
+.part { padding: 10px 12px; border-bottom: 1px solid var(--line); display: grid; gap: 8px; }
+.part:last-child { border-bottom: 0; }
+.part > b { font: 700 12px/1 var(--display); letter-spacing: .06em; color: var(--muted); }
+.line { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.line select, .line input[type=text], .line input[type=number] { border: 1px solid var(--line); border-radius: 8px; background: var(--field); padding: 8px 8px; min-height: 40px; min-width: 0; }
+.line select { flex: 1 1 150px; max-width: 100%; }
+.line input[type=text] { flex: 1 1 130px; }
+.line input[type=number] { width: 84px; text-align: right; font-variant-numeric: tabular-nums; }
+.line .unit { color: var(--muted); font-size: 14px; }
+.line .x { appearance: none; border: 0; background: none; color: var(--muted); font-size: 20px; line-height: 1; padding: 8px; cursor: pointer; margin-left: auto; }
+.hint { font-size: 13px; color: var(--muted); }
+.probs { margin: 0; padding: 10px 12px 10px 30px; color: var(--flag); font-size: 14px; font-weight: 500; }
+.examples { display: grid; gap: 8px; margin-bottom: 18px; }
+.ex { display: flex; gap: 10px; align-items: flex-start; background: var(--wash); border-radius: 10px; padding: 10px 12px; }
+.ex div { flex: 1; min-width: 0; }
+.ex b { display: block; }
+.ex span { font-size: 14px; color: var(--muted); }
+pre.file { background: var(--board); color: var(--board-ink); padding: 12px; border-radius: 10px; overflow-x: auto; font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace; margin: 8px 0 0; white-space: pre; }
+details.raw { margin-top: 6px; }
+details.raw summary { cursor: pointer; color: var(--turf); font-weight: 600; padding: 8px 0; }
+
+/* report */
+.pick { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
+.pick select, .pick input[type=file] { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 9px 10px; min-height: 44px; max-width: 100%; }
+.sample { display: inline-block; background: var(--wash); color: var(--lamp); border-radius: 6px; padding: 3px 8px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.final { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin: 4px 0 16px; }
+.final strong { font: 700 34px/1 var(--display); font-variant-numeric: tabular-nums; }
+.final em { font-style: normal; font-weight: 700; padding: 3px 9px; border-radius: 6px; background: var(--wash); }
+.final em.w { color: var(--turf); } .final em.l { color: var(--flag); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-bottom: 18px; }
+.tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+.tile span { display: block; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.tile b { display: block; font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.tile small { color: var(--muted); font-size: 13px; }
+.meter { height: 6px; border-radius: 3px; background: var(--wash); margin-top: 8px; position: relative; overflow: hidden; }
+.meter i { position: absolute; inset: 0 auto 0 0; background: var(--turf); }
+.meter::after { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: var(--ink); opacity: .45; }
+.tbl { overflow-x: auto; margin-bottom: 18px; }
+h3.sub { font-size: 15px; margin: 0 0 6px; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 8px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; white-space: normal; }
+th { font-size: 12px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+
+/* files */
+ol.steps { margin: 0 0 18px; padding: 0; list-style: none; counter-reset: s; display: grid; gap: 10px; }
+ol.steps li { counter-increment: s; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 12px 12px 52px; position: relative; }
+ol.steps li::before { content: counter(s); position: absolute; left: 14px; top: 11px; font: 700 22px/1 var(--display); color: var(--turf); }
+ol.steps b { display: block; }
+code { font: 14px ui-monospace, Menlo, Consolas, monospace; background: var(--wash); padding: 1px 5px; border-radius: 4px; }
+@media (prefers-reduced-motion: no-preference) { .tile b, .tally b { transition: color .2s; } }
+</style>
+</head>
+<body>
+<div class="board"><div class="board-in">
+  <h1>RETRO BOWL WORKSHOP</h1>
+  <p>Tune the mod and build your own rules. Save the files into the game's folder and they apply on your next snap.</p>
+  <div class="tally" aria-live="polite">
+    <div><b id="t-set">00</b><span>Settings changed</span></div>
+    <div><b id="t-rules">00</b><span>Rules</span></div>
+    <div><b id="t-bad">00</b><span>Need fixing</span></div>
+  </div>
+  <div class="hash" aria-hidden="true"></div>
+</div></div>
+<nav class="tabs" aria-label="Sections"><div class="tabs-in">
+  <a href="#tune" data-tab="tune">Tune</a>
+  <a href="#rules" data-tab="rules">Rules</a>
+  <a href="#report" data-tab="report">Report</a>
+  <a href="#files" data-tab="files">Files</a>
+</div></nav>
+<div class="wrap">
+  <section class="view" id="v-tune"></section>
+  <section class="view" id="v-rules"></section>
+  <section class="view" id="v-report"></section>
+  <section class="view" id="v-files"></section>
+</div>
+<div class="toast" id="toast" role="status" hidden></div>
+<script>// core.js - the workshop's logic with no page in it, so the same code runs in the page and in tests.
+// Everything here must agree with src/rules.c (the mod's parser) and tools/tunables.json.
+(function (root) {
+  'use strict';
+
+  // ---- the blocks a rule is built from (mirrors src/rules.c) ----
+  var EVENTS = [
+    { id: 'presnap', label: 'Before the snap', hint: 'Once each play, when your pre-snap panel appears. The place to add a button or a message.' },
+    { id: 'snap', label: 'At the snap', hint: 'The moment the play starts. Speed changes belong here.' },
+    { id: 'throw', label: 'A pass is thrown', hint: 'Just after release, before the defender\'s play is decided, so a rule can still change this throw\'s chances.' },
+    { id: 'catch', label: 'A pass is caught', hint: '' },
+    { id: 'incomplete', label: 'A pass falls incomplete', hint: '' },
+    { id: 'intercepted', label: 'A pass is intercepted', hint: '' },
+    { id: 'sack', label: 'You are sacked', hint: '' },
+    { id: 'touchdown', label: 'You score a touchdown', hint: '' },
+    { id: 'play_end', label: 'The play ends', hint: 'After every one of your run or pass plays. The place to count things.' },
+    { id: 'button', label: 'A button is pressed', hint: 'A button one of your "Before the snap" rules added.', arg: true }
+  ];
+  // kind: num (compare to a number), yesno (is / is not), choice (pick one), counter (named), pressed (button name)
+  var VARS = [
+    { id: 'down', label: 'Down', kind: 'num', unit: '', hint: '1 to 4' },
+    { id: 'togo', label: 'Yards to go', kind: 'num', unit: 'yds' },
+    { id: 'legs', label: "Back's legs", kind: 'num', unit: '%', hint: '0 to 100' },
+    { id: 'run_share', label: 'How often you run lately', kind: 'num', unit: '%' },
+    { id: 'pass_dial', label: 'Pass coverage tightness', kind: 'num', unit: '%' },
+    { id: 'run_dial', label: 'Run defense tightness', kind: 'num', unit: '%' },
+    { id: 'held', label: 'Seconds from snap to throw', kind: 'num', unit: 's', from: 'throw' },
+    { id: 'depth', label: 'Throw depth', kind: 'num', unit: 'yds', from: 'throw' },
+    { id: 'yards', label: 'Yards the play gained', kind: 'num', unit: 'yds', from: 'end' },
+    { id: 'is_run', label: 'It is a run', kind: 'yesno', from: 'snap' },
+    { id: 'worked', label: 'The play worked', kind: 'yesno', from: 'end' },
+    { id: 'play_action', label: 'Play action is on', kind: 'yesno' },
+    { id: 'scrambled', label: 'You scrambled', kind: 'yesno', from: 'snap' },
+    { id: 'protection', label: 'Protection call', kind: 'choice', choices: [[0, 'Normal'], [1, 'Max protect'], [2, 'Slide up'], [3, 'Slide down']] },
+    { id: 'chance', label: 'Random chance', kind: 'num', unit: '%', hint: '"less than 30" is true 30% of the time' },
+    { id: 'var', label: 'A counter', kind: 'counter' },
+    { id: 'pressed', label: 'A button is on', kind: 'pressed' }
+  ];
+  var OPS = [['=', 'is'], ['!=', 'is not'], ['<', 'less than'], ['<=', 'at most'], ['>', 'more than'], ['>=', 'at least']];
+  var GROUPS = [['qb', 'Your quarterback'], ['back', 'Your back'], ['receivers', 'Your receivers'], ['line', 'Your line'],
+                ['rushers', 'Their pass rushers'], ['coverage', 'Their coverage'], ['defense', 'Their whole defense']];
+  var ACTIONS = [
+    { id: 'tune', label: 'Change a setting' },
+    { id: 'speed', label: 'Speed a group up or down' },
+    { id: 'legs', label: "Change the back's legs" },
+    { id: 'button', label: 'Add a pre-snap button' },
+    { id: 'msg', label: 'Show a message before the snap' },
+    { id: 'var', label: 'Change a counter' }
+  ];
+  var LIMITS = { rules: 64, conds: 6, acts: 8, buttons: 3, name: 39, label: 31, msg: 71, counter: 24 };
+
+  function ident(s) { return String(s || '').replace(/[^A-Za-z0-9_]/g, '_').slice(0, LIMITS.counter); }
+  function oneLine(s, max) { return String(s || '').replace(/[\r\n\t]+/g, ' ').replace(/ +/g, ' ').trim().slice(0, max); }
+  function num(v) { var n = Number(v); if (!isFinite(n)) n = 0; return String(Math.round(n * 1e6) / 1e6); }
+  function byKey(T) { var m = {}; T.forEach(function (t) { m[t.key] = t; }); return m; }
+
+  // ---- settings file ----
+  function settingsText(T, values) {
+    var out = ['# Retro Bowl mod settings - made with the Workshop', '# Save as rbmod_settings.txt in the game\'s folder. Lines starting with # are ignored.'];
+    var group = null;
+    T.forEach(function (t) {
+      if (t.group !== group) { group = t.group; out.push('', '# ' + group); }
+      var v = values[t.key] === undefined ? t.def : values[t.key];
+      out.push(t.key + ' = ' + num(v));
+    });
+    return out.join('\n') + '\n';
+  }
+  function parseSettings(T, text) {
+    var keys = byKey(T), values = {}, unknown = [];
+    String(text).split(/\r?\n/).forEach(function (line) {
+      line = line.trim();
+      if (!line || line[0] === '#') return;
+      var m = /^([A-Za-z0-9_]+)\s*=?\s*(-?[0-9.]+(?:e-?[0-9]+)?)$/.exec(line);
+      if (!m) return;
+      if (!keys[m[1]]) { unknown.push(m[1]); return; }
+      values[m[1]] = Number(m[2]);
+    });
+    return { values: values, unknown: unknown };
+  }
+  function changed(T, values) {
+    return T.filter(function (t) { return values[t.key] !== undefined && Math.abs(values[t.key] - t.def) > 1e-9; });
+  }
+
+  // ---- rules file ----
+  // rule: { name, ev, arg, conds:[{v, name, op, val}], acts:[{t, ...}] }
+  function condLine(c) {
+    var v = c.v === 'var' ? 'var.' + ident(c.name) : c.v === 'pressed' ? 'pressed.' + oneLine(c.name, LIMITS.label).replace(/ /g, '_') : c.v;
+    return 'if ' + v + ' ' + c.op + ' ' + num(c.val);
+  }
+  function actLine(a, T) {
+    if (a.t === 'tune') {
+      var t = byKey(T)[a.key], v = Number(a.val);
+      if (t && t.pct && a.op !== '*') v = v / 100;          // percent settings are typed as percents, stored as fractions
+      return 'then tune ' + a.key + ' ' + a.op + ' ' + num(v) + ' ' + (a.keep ? 'keep' : 'play');
+    }
+    if (a.t === 'speed') return 'then speed ' + a.group + ' ' + num(a.val);
+    if (a.t === 'legs') return 'then legs ' + a.op + ' ' + num(a.val);
+    if (a.t === 'button') return 'then button ' + oneLine(a.text, LIMITS.label);
+    if (a.t === 'msg') return 'then msg ' + oneLine(a.text, LIMITS.msg);
+    if (a.t === 'var') return 'then var ' + ident(a.name) + ' ' + a.op + ' ' + num(a.val);
+    return '';
+  }
+  function rulesText(rules, T) {
+    var out = ['# Retro Bowl mod rules - made with the Workshop', '# Save as rbmod_rules.txt in the game\'s folder.'];
+    rules.forEach(function (r) {
+      if (r.off) return;
+      out.push('', 'rule ' + (oneLine(r.name, LIMITS.name) || 'Unnamed rule'));
+      out.push('when ' + r.ev + (r.ev === 'button' ? ' ' + oneLine(r.arg, LIMITS.label) : ''));
+      (r.conds || []).slice(0, LIMITS.conds).forEach(function (c) { out.push(condLine(c)); });
+      (r.acts || []).slice(0, LIMITS.acts).forEach(function (a) { var l = actLine(a, T); if (l) out.push(l); });
+      out.push('end');
+    });
+    return out.join('\n') + '\n';
+  }
+  // what is wrong with a rule, in words (empty list = fine)
+  function problems(r, rules, T) {
+    var p = [], keys = byKey(T);
+    if (!oneLine(r.name, LIMITS.name)) p.push('Give the rule a name.');
+    if (r.ev === 'button' && !oneLine(r.arg, LIMITS.label)) p.push('Say which button this rule answers to.');
+    if (r.ev === 'button') {
+      var label = oneLine(r.arg, LIMITS.label), made = rules.some(function (o) {
+        return !o.off && o.ev === 'presnap' && (o.acts || []).some(function (a) { return a.t === 'button' && oneLine(a.text, LIMITS.label) === label; });
+      });
+      if (label && !made) p.push('No "Before the snap" rule adds a button called "' + label + '", so this can never fire.');
+    }
+    if (!(r.acts || []).length) p.push('Add at least one thing for the rule to do.');
+    (r.conds || []).forEach(function (c) {
+      if ((c.v === 'var' || c.v === 'pressed') && !oneLine(c.name, LIMITS.label)) p.push('A condition is missing its ' + (c.v === 'var' ? 'counter' : 'button') + ' name.');
+    });
+    (r.acts || []).forEach(function (a) {
+      if (a.t === 'tune' && !keys[a.key]) p.push('Pick which setting to change.');
+      if ((a.t === 'button' || a.t === 'msg') && !oneLine(a.text, 80)) p.push(a.t === 'button' ? 'A button needs a label.' : 'A message needs some text.');
+      if (a.t === 'button' && r.ev !== 'presnap') p.push('Buttons can only be added by a "Before the snap" rule.');
+      if (a.t === 'var' && !ident(a.name)) p.push('A counter needs a name.');
+      if (a.t === 'speed' && !(Number(a.val) > 0)) p.push('Speed must be above 0%.');
+    });
+    return p;
+  }
+
+  // ---- report: rbmod_plays.txt ----
+  function parsePlays(text) {
+    var plays = [];
+    String(text).split(/\r?\n/).forEach(function (line) {
+      if (line.indexOf('kind=') < 0) return;
+      var o = {};
+      line.trim().split(/\s+/).forEach(function (kv) {
+        var i = kv.indexOf('=');
+        if (i < 1) return;
+        var k = kv.slice(0, i), v = kv.slice(i + 1), n = Number(v);
+        o[k] = v !== '' && isFinite(n) ? n : v;
+      });
+      if (o.kind === 'pass' || o.kind === 'run') plays.push(o);
+    });
+    return plays;
+  }
+  // a new game starts when the combined score drops or a long time passes
+  function splitGames(plays) {
+    var games = [], cur = null, lastTotal = -1, lastT = 0;
+    plays.forEach(function (p) {
+      var total = (p.us >= 0 ? p.us : 0) + (p.them >= 0 ? p.them : 0);
+      if (!cur || total < lastTotal || (p.t - lastT) > 1500) { cur = { plays: [] }; games.push(cur); }
+      cur.plays.push(p); lastTotal = total; lastT = p.t;
+    });
+    games.forEach(function (g) {
+      var l = g.plays[g.plays.length - 1];
+      g.t = g.plays[0].t; g.us = l.us; g.them = l.them;
+    });
+    return games;
+  }
+  function rate(list) {
+    var n = list.length, ok = 0, yds = 0;
+    list.forEach(function (p) { ok += p.ok ? 1 : 0; yds += p.yds || 0; });
+    return { n: n, ok: ok, pct: n ? Math.round(100 * ok / n) : 0, avg: n ? Math.round(10 * yds / n) / 10 : 0 };
+  }
+  function summarize(plays) {
+    var P = plays.filter(function (p) { return p.kind === 'pass'; }), R = plays.filter(function (p) { return p.kind === 'run'; });
+    function pick(list, f) { return list.filter(f); }
+    var s = {
+      all: rate(plays), pass: rate(P), run: rate(R),
+      caught: pick(P, function (p) { return p.caught; }).length,
+      ints: pick(P, function (p) { return p.end === 'int'; }).length,
+      breakups: pick(P, function (p) { return p.broken || p.tipped; }).length,
+      tds: pick(plays, function (p) { return p.end === 'td'; }).length,
+      byPlay: ['pick', 'whiff', 'breakup', 'hit'].map(function (k) {
+        var l = pick(P, function (p) { return p.play === k; }), r = rate(l);
+        r.key = k; r.ints = pick(l, function (p) { return p.end === 'int'; }).length; return r;
+      }),
+      byRelease: [['Within the full bonus', function (p) { return p.quick >= 0.99; }], ['Fairly quick', function (p) { return p.quick > 0 && p.quick < 0.99; }],
+                  ['Held, or after a scramble', function (p) { return !(p.quick > 0); }]].map(function (b) { var r = rate(pick(P, b[1])); r.key = b[0]; return r; }),
+      byDown: [1, 2, 3, 4].map(function (d) { var r = rate(pick(plays, function (p) { return p.dn === d; })); r.key = d; return r; }),
+      byLegs: [['Fresh', function (p) { return p.legs >= 75; }], ['Winded', function (p) { return p.legs >= 40 && p.legs < 75; }],
+               ['Gassed', function (p) { return p.legs < 40; }]].map(function (b) { var r = rate(pick(R, b[1])); r.key = b[0]; return r; }),
+      tools: {
+        pa: pick(plays, function (p) { return p.pa; }).length, hot: pick(plays, function (p) { return p.hot > 0; }).length,
+        pumps: plays.reduce(function (a, p) { return a + (p.pumps || 0); }, 0), scr: pick(plays, function (p) { return p.scr; }).length,
+        max: pick(P, function (p) { return p.prot === 1; }).length, slide: pick(P, function (p) { return p.prot === 2 || p.prot === 3; }).length
+      },
+      dial: plays.length ? { pass0: plays[0].pdial, pass1: plays[plays.length - 1].pdial, run1: plays[plays.length - 1].rdial } : null
+    };
+    return s;
+  }
+
+  var api = { EVENTS: EVENTS, VARS: VARS, OPS: OPS, GROUPS: GROUPS, ACTIONS: ACTIONS, LIMITS: LIMITS, ident: ident, oneLine: oneLine,
+              settingsText: settingsText, parseSettings: parseSettings, changed: changed, rulesText: rulesText, problems: problems,
+              parsePlays: parsePlays, splitGames: splitGames, summarize: summarize };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.WS = api;
+})(typeof window !== 'undefined' ? window : this);
+</script>
+<script>// examples.js - starter rules shown in the builder (plain data; the page and the tests both load it)
+(function (root) {
+  var EX = [
+    { title: 'Short-yardage surge', about: 'On a yard or less to go, a Surge button appears. Press it and your line and quarterback fire off faster at the snap.',
+      rules: [
+        { name: 'Surge button on short yardage', ev: 'presnap', conds: [{ v: 'togo', op: '<=', val: 1 }],
+          acts: [{ t: 'button', text: 'Surge' }, { t: 'msg', text: 'Short yardage: Surge is available' }] },
+        { name: 'Surge at the snap', ev: 'snap', conds: [{ v: 'pressed', name: 'Surge', op: '=', val: 1 }],
+          acts: [{ t: 'speed', group: 'line', val: 125 }, { t: 'speed', group: 'qb', val: 115 }] }
+      ] },
+    { title: 'Workhorse tax', about: 'Counts carries in a row. From the third straight carry, each one costs the back half again as much.',
+      rules: [
+        { name: 'Count a carry', ev: 'play_end', conds: [{ v: 'is_run', op: '=', val: 1 }], acts: [{ t: 'var', name: 'carries', op: '+', val: 1 }] },
+        { name: 'A pass resets the count', ev: 'play_end', conds: [{ v: 'is_run', op: '=', val: 0 }], acts: [{ t: 'var', name: 'carries', op: '=', val: 0 }] },
+        { name: 'Third straight carry costs more', ev: 'presnap', conds: [{ v: 'var', name: 'carries', op: '>=', val: 2 }],
+          acts: [{ t: 'tune', key: 'legs_carry', op: '*', val: 1.5, keep: false }, { t: 'msg', text: 'Back has carried twice in a row' }] }
+      ] },
+    { title: 'They sit on the sticks', about: 'On third or fourth and long, the defense expects a pass: picks are more likely and the defender whiffs less.',
+      rules: [
+        { name: 'Third and long', ev: 'presnap', conds: [{ v: 'down', op: '>=', val: 3 }, { v: 'togo', op: '>=', val: 8 }],
+          acts: [{ t: 'tune', key: 'pick_base', op: '+', val: 6, keep: false }, { t: 'tune', key: 'whiff_tight', op: '+', val: -8, keep: false },
+                 { t: 'msg', text: 'Long yardage: they are sitting on the pass' }] }
+      ] },
+    { title: 'Hurry-up button', about: 'A Hurry up button every play. Pressed, a quick release pays more, but the back gets no rest that play.',
+      rules: [
+        { name: 'Offer Hurry up', ev: 'presnap', conds: [], acts: [{ t: 'button', text: 'Hurry up' }] },
+        { name: 'Hurry up is on', ev: 'button', arg: 'Hurry up', conds: [],
+          acts: [{ t: 'tune', key: 'quick_whiff', op: '+', val: 10, keep: false }, { t: 'tune', key: 'legs_rest', op: '=', val: 0, keep: false },
+                 { t: 'msg', text: 'Hurry up: quick throws pay more' }] }
+      ] },
+    { title: 'Heat check', about: 'After a touchdown pass, your next drive starts with a sharper offense for one play. It catches two times in three.',
+      rules: [
+        { name: 'Touchdown lights the fuse', ev: 'touchdown', conds: [], acts: [{ t: 'var', name: 'hot', op: '=', val: 1 }] },
+        { name: 'Hot: receivers fly', ev: 'snap', conds: [{ v: 'var', name: 'hot', op: '=', val: 1 }, { v: 'chance', op: '>=', val: 33 }],
+          acts: [{ t: 'speed', group: 'receivers', val: 112 }] },
+        { name: 'Hot: used up', ev: 'play_end', conds: [{ v: 'var', name: 'hot', op: '=', val: 1 }], acts: [{ t: 'var', name: 'hot', op: '=', val: 0 }] }
+      ] }
+  ];
+  if (typeof module !== 'undefined' && module.exports) module.exports = EX; else root.WS_EXAMPLES = EX;
+})(typeof window !== 'undefined' ? window : this);
+</script>
+<script>
+(function () {
+  'use strict';
+  var T = [{"group":"Interceptions","key":"pick_base","label":"Pick chance on a route they don't know","def":0.12,"min":0,"max":0.6,"step":0.01,"pct":true,"help":"How often the defender goes for a pick on a throw to an area you rarely use."},{"group":"Interceptions","key":"pick_known","label":"Extra pick chance on a route they know","def":0.33,"min":0,"max":0.6,"step":0.01,"pct":true,"help":"Added on top when the defense fully knows that area. The two together are the highest pick chance."},{"group":"Interceptions","key":"pa_pick_cut","label":"Play action cuts the pick chance by","def":1.0,"min":0,"max":1,"step":0.05,"pct":true,"help":"At 100%, a defense that fully bites on play action has no pick chance."},{"group":"Interceptions","key":"return_speed","label":"Returner speed vs your fastest player","def":0.9,"min":0.5,"max":1.6,"step":0.05,"pct":true,"help":"Below 100% someone on your offense can run him down."},{"group":"Interceptions","key":"pursuit_burst","label":"Your players' chase burst","def":1.25,"min":1,"max":2,"step":0.05,"pct":true,"help":"Speed-up for your players while chasing an interception."},{"group":"Coverage","key":"whiff_tight","label":"Whiff chance against tight coverage","def":0.35,"min":0,"max":1,"step":0.01,"pct":true,"help":"How often the defender goes for the ball and misses when the coverage is at its tightest."},{"group":"Coverage","key":"whiff_loose","label":"Whiff chance against loose coverage","def":0.65,"min":0,"max":1,"step":0.01,"pct":true,"help":"The most he whiffs when coverage is loose."},{"group":"Coverage","key":"breakup_share","label":"Breakups when he doesn't miss","def":0.4,"min":0,"max":1,"step":0.05,"pct":true,"help":"When he gets there, how often he knocks the pass away. The rest of the time he hits the receiver at the catch."},{"group":"Coverage","key":"contest_reach","label":"Contested-catch distance (pixels)","def":28,"min":10,"max":60,"step":1,"help":"A defender this close to the receiver at the catch can break it up. About 20 pixels is a yard."},{"group":"Coverage","key":"tip_height","label":"Highest ball a defender can bat","def":45,"min":15,"max":60,"step":1,"help":"Ball height a defender in its path can reach."},{"group":"Coverage","key":"react_radius","label":"How far away a defender reacts (pixels)","def":230,"min":60,"max":400,"step":10,"help":"The nearest defender within this distance of the catch point goes for the ball."},{"group":"Coverage","key":"react_frames","label":"Reaction time on an unknown route (frames)","def":12,"min":0,"max":40,"step":1,"help":"Frames before he reacts, at 60 a second. Known routes and tight coverage shorten it."},{"group":"Coverage","key":"whiff_frames","label":"Recovery after a whiff (frames)","def":18,"min":0,"max":60,"step":1,"help":"How long he is out of the play after missing."},{"group":"Quick release","key":"quick_full","label":"Full bonus when thrown within (seconds)","def":1.2,"min":0.3,"max":3,"step":0.1,"help":"A ball out this soon after the snap gets the whole bonus."},{"group":"Quick release","key":"quick_none","label":"No bonus after (seconds)","def":2.0,"min":0.5,"max":5,"step":0.1,"help":"The bonus fades to nothing by this time."},{"group":"Quick release","key":"quick_pick_cut","label":"Quick release cuts the pick chance by","def":0.5,"min":0,"max":1,"step":0.05,"pct":true,"help":""},{"group":"Quick release","key":"quick_whiff","label":"Quick release adds to the whiff chance","def":0.15,"min":0,"max":0.6,"step":0.01,"pct":true,"help":""},{"group":"Quick release","key":"quick_delay","label":"Quick release delays his reaction (frames)","def":8,"min":0,"max":30,"step":1,"help":""},{"group":"Play action and pump","key":"pa_frames","label":"How long the defense steps up (frames)","def":42,"min":0,"max":120,"step":1,"help":""},{"group":"Play action and pump","key":"pa_full_runs","label":"Run share for a full bite","def":0.45,"min":0.2,"max":0.9,"step":0.01,"pct":true,"help":"Running this often makes play action land fully. Below 15% it barely works."},{"group":"Play action and pump","key":"pa_whiff","label":"Play action adds to the whiff chance","def":0.25,"min":0,"max":0.6,"step":0.01,"pct":true,"help":"At a full bite."},{"group":"Play action and pump","key":"pump_frames","label":"Pump fake length (frames)","def":16,"min":4,"max":60,"step":1,"help":""},{"group":"Play action and pump","key":"max_pumps","label":"Pump fakes per play","def":2,"min":0,"max":5,"step":1,"help":""},{"group":"Protection","key":"max_hold","label":"Rusher's drive while your back blocks him","def":0.3,"min":0,"max":1,"step":0.05,"pct":true,"help":"Lower is a stronger block."},{"group":"Protection","key":"slide_hold","label":"Rusher's drive against a slid line","def":0.5,"min":0,"max":1,"step":0.05,"pct":true,"help":"Lower is a stronger block."},{"group":"Protection","key":"slide_read_from","label":"Slide repeats before they catch on","def":0.4,"min":0,"max":1,"step":0.05,"help":"How lopsided your slides must be before the defense reads them. 0.40 is about the third in a row."},{"group":"Protection","key":"slide_edge_max","label":"Edge rusher speed-up when they read it","def":0.3,"min":0,"max":1,"step":0.05,"pct":true,"help":""},{"group":"Running back","key":"legs_carry","label":"Legs lost per carry","def":0.14,"min":0,"max":0.5,"step":0.01,"pct":true,"help":""},{"group":"Running back","key":"legs_per_yard","label":"Extra legs lost per yard gained","def":0.006,"min":0,"max":0.03,"step":0.001,"pct":true,"help":"Counts up to 20 yards."},{"group":"Running back","key":"legs_rest","label":"Legs regained on a play he doesn't carry","def":0.06,"min":0,"max":0.3,"step":0.01,"pct":true,"help":""},{"group":"Running back","key":"legs_block","label":"Legs lost staying in to block","def":0.0,"min":0,"max":0.2,"step":0.01,"pct":true,"help":""},{"group":"Running back","key":"legs_fresh","label":"Full speed at or above","def":0.75,"min":0.1,"max":1,"step":0.05,"pct":true,"help":""},{"group":"Running back","key":"legs_winded","label":"Gassed below","def":0.4,"min":0,"max":0.9,"step":0.05,"pct":true,"help":""},{"group":"Running back","key":"legs_floor","label":"Speed with nothing left","def":0.65,"min":0.3,"max":1,"step":0.05,"pct":true,"help":""},{"group":"Difficulty","key":"balance_target","label":"Success rate the defense holds you to","def":0.5,"min":0.2,"max":0.9,"step":0.01,"pct":true,"help":"The defense tightens when more of your plays work than this, and loosens when fewer do."},{"group":"Difficulty","key":"pass_dial_max","label":"Tightest pass coverage allowed","def":1.0,"min":0.3,"max":1,"step":0.05,"help":""},{"group":"Difficulty","key":"run_dial_max","label":"Tightest run defense allowed","def":0.85,"min":0.3,"max":1,"step":0.05,"help":""},{"group":"Difficulty","key":"dial_min","label":"Loosest either can get","def":0.25,"min":0.1,"max":0.8,"step":0.05,"help":""},{"group":"Difficulty","key":"cpu_def_boost","label":"CPU defense speed boost at its tightest","def":0.5,"min":0,"max":1,"step":0.05,"pct":true,"help":"Extra acceleration for CPU defenders on Extreme. It scales with how tight the defense is."},{"group":"Difficulty","key":"cpu_off_boost","label":"CPU offense speed","def":1.35,"min":1,"max":2,"step":0.05,"pct":true,"help":"Acceleration multiplier for the CPU's offense on Extreme."}];
+  var WS = window.WS, EX = window.WS_EXAMPLES, L = WS.LIMITS;
+  var S = { values: {}, rules: [], presets: {}, open: {} };
+  var downloads = null, report = { plays: [], games: [], pick: 0, sample: true };
+
+  // ---------- small helpers ----------
+  function h(tag, attrs, kids) {
+    var e = document.createElement(tag), k;
+    for (k in (attrs || {})) {
+      var v = attrs[k];
+      if (v === null || v === undefined || v === false) continue;
+      if (k === 'class') e.className = v; else if (k === 'text') e.textContent = v;
+      else if (k.slice(0, 2) === 'on') e.addEventListener(k.slice(2), v);
+      else if (k === 'value') e.value = v; else if (k === 'checked' || k === 'disabled' || k === 'open' || k === 'hidden') e[k] = !!v;
+      else e.setAttribute(k, v === true ? '' : v);
+    }
+    [].concat(kids || []).forEach(function (c) { if (c !== null && c !== undefined && c !== false) e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+    return e;
+  }
+  function $(id) { return document.getElementById(id); }
+  function clear(e) { while (e.firstChild) e.removeChild(e.firstChild); return e; }
+  function two(n) { return (n < 10 ? '0' : '') + n; }
+  var toastTimer = 0;
+  function toast(msg) { var t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.hidden = true; }, 4200); }
+  function save() { try { localStorage.setItem('rbws1', JSON.stringify(S)); } catch (e) {} }
+  function load(d) {
+    try { d = d || JSON.parse(localStorage.getItem('rbws1') || 'null'); } catch (e) { d = null; }
+    if (d && typeof d === 'object') { S.values = d.values || {}; S.rules = Array.isArray(d.rules) ? d.rules : []; S.presets = d.presets || {}; S.open = d.open || {}; }
+  }
+  function sel(options, value, onchange, id) {
+    var s = h('select', { id: id, onchange: function () { onchange(s.value); } }, options.map(function (o) { return h('option', { value: String(o[0]), text: o[1] }); }));
+    s.value = String(value); return s;
+  }
+  function uid() { return 'r' + Math.random().toString(36).slice(2, 9); }
+  function tun(key) { for (var i = 0; i < T.length; i++) if (T[i].key === key) return T[i]; return null; }
+  function shown(t, v) { return t.pct ? Math.round(v * 1000) / 10 : v; }
+  function unit(t) { return t.pct ? '%' : ''; }
+
+  // ---------- saving files ----------
+  function copyText(text, what) {
+    function fallback() { toast('Copying is blocked here. Open "See the file" and copy the text by hand.'); }
+    try { navigator.clipboard.writeText(text).then(function () { toast(what + ' copied. Paste it into a file with that name.'); }, fallback); } catch (e) { fallback(); }
+  }
+  function saveFile(name, text) {
+    if (!downloads) { copyText(text, name); return; }
+    downloads.save({ filename: name, data: text }).then(function () {
+      toast('Saved. Put ' + name + ' in the RetroBowl folder in Files.');
+    }, function (err) {
+      if (err && err.code === 'declined') return;
+      copyText(text, name);
+    });
+  }
+  function fileButtons(name, getText) {
+    return [
+      h('button', { class: 'btn go', type: 'button', text: downloads ? 'Save ' + name : 'Copy ' + name, onclick: function () { saveFile(name, getText()); } }),
+      downloads ? h('button', { class: 'btn', type: 'button', text: 'Copy the text', onclick: function () { copyText(getText(), name); } }) : null
+    ];
+  }
+  function readFile(input, cb) {
+    var f = input.files && input.files[0];
+    if (!f) return;
+    var r = new FileReader();
+    r.onload = function () { cb(String(r.result || ''), f.name); input.value = ''; };
+    r.onerror = function () { toast('That file could not be read.'); };
+    r.readAsText(f);
+  }
+
+  // ---------- scoreboard ----------
+  function tally() {
+    var bad = S.rules.filter(function (r) { return !r.off && WS.problems(r, S.rules, T).length; }).length;
+    $('t-set').textContent = two(WS.changed(T, S.values).length);
+    $('t-rules').textContent = two(S.rules.filter(function (r) { return !r.off; }).length);
+    $('t-bad').textContent = two(bad); $('t-bad').className = bad ? 'bad' : '';
+  }
+
+  // ---------- Tune ----------
+  function setValue(t, v) {
+    if (!isFinite(v)) return;
+    v = Math.min(t.max, Math.max(t.min, v));
+    if (Math.abs(v - t.def) < 1e-9) delete S.values[t.key]; else S.values[t.key] = Math.round(v * 1e6) / 1e6;
+    save(); tally();
+  }
+  function tuneRow(t, refreshGroup) {
+    var v = S.values[t.key] === undefined ? t.def : S.values[t.key], k = t.pct ? 100 : 1;
+    var row = h('div', { class: 'row' + (Math.abs(v - t.def) > 1e-9 ? ' changed' : '') });
+    var range = h('input', { type: 'range', id: 'rg-' + t.key, min: t.min * k, max: t.max * k, step: t.step * k, value: v * k, 'aria-label': t.label });
+    var box = h('input', { type: 'number', id: 'nm-' + t.key, inputmode: 'decimal', min: t.min * k, max: t.max * k, step: t.step * k, value: shown(t, v) });
+    var was = h('div', { class: 'was note' });
+    function sync(nv, from) {
+      setValue(t, nv);
+      var cur = S.values[t.key] === undefined ? t.def : S.values[t.key];
+      if (from !== range) range.value = cur * k;
+      if (from !== box) box.value = shown(t, cur);
+      var ch = Math.abs(cur - t.def) > 1e-9;
+      row.className = 'row' + (ch ? ' changed' : '');
+      clear(was);
+      if (ch) { was.appendChild(document.createTextNode('Built-in value ' + shown(t, t.def) + unit(t) + '. ')); was.appendChild(h('button', { type: 'button', text: 'Put it back', onclick: function () { sync(t.def, null); } })); }
+      refreshGroup();
+    }
+    range.addEventListener('input', function () { sync(Number(range.value) / k, range); });
+    box.addEventListener('change', function () { sync(Number(box.value) / k, null); });
+    row.appendChild(h('label', { for: 'nm-' + t.key, text: t.label }));
+    if (t.help) row.appendChild(h('div', { class: 'help', text: t.help }));
+    row.appendChild(h('div', { class: 'ctl' }, [range, h('div', { class: 'numbox' }, [box, h('span', { text: unit(t) })])]));
+    row.appendChild(was);
+    if (Math.abs(v - t.def) > 1e-9) { was.appendChild(document.createTextNode('Built-in value ' + shown(t, t.def) + unit(t) + '. ')); was.appendChild(h('button', { type: 'button', text: 'Put it back', onclick: function () { sync(t.def, null); } })); }
+    return row;
+  }
+  function renderTune() {
+    var v = clear($('v-tune'));
+    v.appendChild(h('p', { class: 'lede', text: 'Every number the mod uses on your offense. Move one, save the file, and it applies from your next snap. Nothing changes in the game until you save.' }));
+    var imp = h('input', { type: 'file', id: 'imp-set', accept: '.txt,text/plain', hidden: true, onchange: function () {
+      readFile(imp, function (text) { var r = WS.parseSettings(T, text); S.values = {}; T.forEach(function (t) { if (r.values[t.key] !== undefined) setValue(t, r.values[t.key]); }); save(); renderTune(); tally(); toast('Loaded ' + Object.keys(r.values).length + ' settings from the file.'); });
+    } });
+    v.appendChild(h('div', { class: 'bar' }, fileButtons('rbmod_settings.txt', function () { return WS.settingsText(T, S.values); }).concat([
+      h('button', { class: 'btn', type: 'button', text: 'Load a settings file', onclick: function () { imp.click(); } }), imp,
+      h('button', { class: 'btn quiet danger', type: 'button', text: 'Put everything back', onclick: function () { S.values = {}; save(); renderTune(); tally(); toast('All settings are back to the built-in values.'); } })
+    ])));
+    // presets
+    var pname = h('input', { type: 'text', id: 'preset-name', maxlength: 24, placeholder: 'Name this setup', 'aria-label': 'Preset name' });
+    var pr = h('div', { class: 'presets' }, [pname, h('button', { class: 'btn small', type: 'button', text: 'Keep as a preset', onclick: function () {
+      var n = WS.oneLine(pname.value, 24); if (!n) { toast('Type a name for the preset first.'); return; }
+      S.presets[n] = JSON.parse(JSON.stringify(S.values)); save(); renderTune(); toast('Preset "' + n + '" kept on this device.');
+    } })]);
+    Object.keys(S.presets).forEach(function (n) {
+      pr.appendChild(h('span', { class: 'chip' }, [
+        h('button', { type: 'button', text: n, title: 'Use this preset', onclick: function () { S.values = JSON.parse(JSON.stringify(S.presets[n])); save(); renderTune(); tally(); toast('Using preset "' + n + '". Save the file to apply it.'); } }),
+        h('button', { type: 'button', text: '×', 'aria-label': 'Delete preset ' + n, onclick: function () { delete S.presets[n]; save(); renderTune(); } })
+      ]));
+    });
+    v.appendChild(pr);
+    var groups = [];
+    T.forEach(function (t) { if (groups.indexOf(t.group) < 0) groups.push(t.group); });
+    groups.forEach(function (g, gi) {
+      var list = T.filter(function (t) { return t.group === g; }), count = h('i');
+      function refresh() { var n = list.filter(function (t) { return S.values[t.key] !== undefined; }).length; count.textContent = n ? n + ' changed' : ''; }
+      var d = h('details', { class: 'group', open: S.open[g] === undefined ? gi === 0 : S.open[g] }, [h('summary', {}, [h('span', { text: g }), count])]);
+      d.addEventListener('toggle', function () { S.open[g] = d.open; save(); });
+      d.appendChild(h('div', { class: 'rows' }, list.map(function (t) { return tuneRow(t, refresh); })));
+      refresh(); v.appendChild(d);
+    });
+  }
+
+  // ---------- Rules ----------
+  function newRule() { return { id: uid(), name: '', ev: 'presnap', arg: '', conds: [], acts: [] }; }
+  function buttonLabels() {
+    var out = [];
+    S.rules.forEach(function (r) { (r.acts || []).forEach(function (a) { var l = WS.oneLine(a.text, L.label); if (a.t === 'button' && l && out.indexOf(l) < 0) out.push(l); }); });
+    return out;
+  }
+  function condRow(r, c, again) {
+    var V = WS.VARS.filter(function (x) { return x.id === c.v; })[0] || WS.VARS[0], line = h('div', { class: 'line' });
+    line.appendChild(sel(WS.VARS.map(function (x) { return [x.id, x.label]; }), c.v, function (val) {
+      var nv = WS.VARS.filter(function (x) { return x.id === val; })[0];
+      c.v = val; c.name = ''; c.op = nv.kind === 'num' || nv.kind === 'counter' ? '>=' : '='; c.val = nv.kind === 'num' || nv.kind === 'counter' ? 0 : nv.kind === 'choice' ? nv.choices[0][0] : 1; again();
+    }));
+    if (V.kind === 'counter') line.appendChild(h('input', { type: 'text', maxlength: L.counter, placeholder: 'counter name', value: c.name || '', 'aria-label': 'Counter name', onchange: function (e) { c.name = WS.ident(e.target.value); again(); } }));
+    if (V.kind === 'pressed') {
+      var labs = buttonLabels();
+      if (labs.length) line.appendChild(sel([['', 'which button?']].concat(labs.map(function (l) { return [l, l]; })), c.name || '', function (val) { c.name = val; again(); }));
+      else line.appendChild(h('span', { class: 'hint', text: 'Add a button in a "Before the snap" rule first.' }));
+    }
+    if (V.kind === 'num' || V.kind === 'counter') {
+      line.appendChild(sel(WS.OPS, c.op, function (val) { c.op = val; again(); }));
+      line.appendChild(h('input', { type: 'number', inputmode: 'decimal', step: 'any', value: c.val, 'aria-label': 'Value', onchange: function (e) { c.val = Number(e.target.value) || 0; again(); } }));
+      if (V.unit) line.appendChild(h('span', { class: 'unit', text: V.unit }));
+    } else if (V.kind === 'choice') {
+      line.appendChild(sel([['=', 'is'], ['!=', 'is not']], c.op, function (val) { c.op = val; again(); }));
+      line.appendChild(sel(V.choices, c.val, function (val) { c.val = Number(val); again(); }));
+    } else {
+      line.appendChild(sel([[1, 'yes'], [0, 'no']], c.val ? 1 : 0, function (val) { c.op = '='; c.val = Number(val); again(); }));
+    }
+    line.appendChild(h('button', { class: 'x', type: 'button', text: '×', 'aria-label': 'Remove this condition', onclick: function () { r.conds.splice(r.conds.indexOf(c), 1); again(); } }));
+    return line;
+  }
+  function actRow(r, a, again) {
+    var line = h('div', { class: 'line' });
+    line.appendChild(sel(WS.ACTIONS.map(function (x) { return [x.id, x.label]; }), a.t, function (val) {
+      var keep = a; Object.keys(keep).forEach(function (k) { delete keep[k]; });
+      a.t = val;
+      if (val === 'tune') { a.key = T[0].key; a.op = '='; a.val = shown(T[0], T[0].def); a.keep = false; }
+      if (val === 'speed') { a.group = 'qb'; a.val = 110; }
+      if (val === 'legs') { a.op = '+'; a.val = -10; }
+      if (val === 'var') { a.name = ''; a.op = '+'; a.val = 1; }
+      if (val === 'button' || val === 'msg') a.text = '';
+      again();
+    }));
+    function numIn(key, label) { return h('input', { type: 'number', inputmode: 'decimal', step: 'any', value: a[key], 'aria-label': label, onchange: function (e) { a[key] = Number(e.target.value) || 0; again(); } }); }
+    if (a.t === 'tune') {
+      var t = tun(a.key) || T[0];
+      line.appendChild(sel(T.map(function (x) { return [x.key, x.group + ': ' + x.label]; }), a.key, function (val) { var nt = tun(val); a.key = val; if (a.op !== '*') a.val = shown(nt, nt.def); again(); }));
+      line.appendChild(sel([['=', 'set to'], ['+', 'add'], ['*', 'multiply by']], a.op, function (val) { a.op = val; a.val = val === '*' ? 1.5 : val === '+' ? 0 : shown(t, t.def); again(); }));
+      line.appendChild(numIn('val', 'Value'));
+      if (a.op !== '*' && unit(t)) line.appendChild(h('span', { class: 'unit', text: a.op === '+' ? 'points' : unit(t) }));
+      line.appendChild(sel([['play', 'for this play'], ['keep', 'from now on']], a.keep ? 'keep' : 'play', function (val) { a.keep = val === 'keep'; again(); }));
+    } else if (a.t === 'speed') {
+      line.appendChild(sel(WS.GROUPS, a.group, function (val) { a.group = val; again(); }));
+      line.appendChild(h('span', { class: 'unit', text: 'runs at' })); line.appendChild(numIn('val', 'Percent of normal speed')); line.appendChild(h('span', { class: 'unit', text: '% this play' }));
+    } else if (a.t === 'legs') {
+      line.appendChild(sel([['+', 'add'], ['=', 'set to']], a.op, function (val) { a.op = val; again(); }));
+      line.appendChild(numIn('val', 'Percent')); line.appendChild(h('span', { class: 'unit', text: a.op === '+' ? 'points (negative tires him)' : '%' }));
+    } else if (a.t === 'var') {
+      line.appendChild(h('input', { type: 'text', maxlength: L.counter, placeholder: 'counter name', value: a.name || '', 'aria-label': 'Counter name', onchange: function (e) { a.name = WS.ident(e.target.value); again(); } }));
+      line.appendChild(sel([['+', 'add'], ['=', 'set to']], a.op, function (val) { a.op = val; again(); }));
+      line.appendChild(numIn('val', 'Value'));
+    } else {
+      line.appendChild(h('input', { type: 'text', maxlength: a.t === 'button' ? L.label : L.msg, placeholder: a.t === 'button' ? 'button label' : 'what it should say', value: a.text || '', 'aria-label': a.t === 'button' ? 'Button label' : 'Message', onchange: function (e) { a.text = WS.oneLine(e.target.value, a.t === 'button' ? L.label : L.msg); again(); } }));
+    }
+    line.appendChild(h('button', { class: 'x', type: 'button', text: '×', 'aria-label': 'Remove this action', onclick: function () { r.acts.splice(r.acts.indexOf(a), 1); again(); } }));
+    return line;
+  }
+  function ruleCard(r) {
+    function again() { save(); renderRules(); tally(); }
+    var probs = r.off ? [] : WS.problems(r, S.rules, T), ev = WS.EVENTS.filter(function (e) { return e.id === r.ev; })[0] || WS.EVENTS[0];
+    var card = h('article', { class: 'rule' + (r.off ? ' off' : probs.length ? ' bad' : '') });
+    card.appendChild(h('header', {}, [
+      h('input', { type: 'text', maxlength: L.name, placeholder: 'Name this rule', value: r.name || '', 'aria-label': 'Rule name', onchange: function (e) { r.name = WS.oneLine(e.target.value, L.name); again(); } }),
+      h('button', { class: 'btn small quiet', type: 'button', text: r.off ? 'Turn on' : 'Turn off', onclick: function () { r.off = !r.off; again(); } }),
+      h('button', { class: 'btn small quiet danger', type: 'button', text: 'Delete', onclick: function () { S.rules.splice(S.rules.indexOf(r), 1); again(); } })
+    ]));
+    var when = h('div', { class: 'line' }, [sel(WS.EVENTS.map(function (e) { return [e.id, e.label]; }), r.ev, function (val) { r.ev = val; if (val !== 'button') r.arg = ''; again(); })]);
+    if (ev.arg) {
+      var labs = buttonLabels();
+      if (labs.length) when.appendChild(sel([['', 'which button?']].concat(labs.map(function (l) { return [l, l]; })), r.arg || '', function (val) { r.arg = val; again(); }));
+      else when.appendChild(h('span', { class: 'hint', text: 'Add a button in a "Before the snap" rule first.' }));
+    }
+    card.appendChild(h('div', { class: 'part' }, [h('b', { text: 'WHEN' }), when, ev.hint ? h('div', { class: 'hint', text: ev.hint }) : null]));
+    card.appendChild(h('div', { class: 'part' }, [h('b', { text: 'IF' })].concat(
+      (r.conds || []).map(function (c) { return condRow(r, c, again); }),
+      [(r.conds || []).length ? null : h('div', { class: 'hint', text: 'No conditions: it happens every time.' }),
+       (r.conds || []).length < L.conds ? h('div', {}, [h('button', { class: 'btn small', type: 'button', text: 'Add a condition', onclick: function () { r.conds.push({ v: 'down', op: '>=', val: 3 }); again(); } })]) : null])));
+    card.appendChild(h('div', { class: 'part' }, [h('b', { text: 'THEN' })].concat(
+      (r.acts || []).map(function (a) { return actRow(r, a, again); }),
+      [(r.acts || []).length < L.acts ? h('div', {}, [h('button', { class: 'btn small', type: 'button', text: 'Add an action', onclick: function () { r.acts.push({ t: 'msg', text: '' }); again(); } })]) : null])));
+    if (probs.length) card.appendChild(h('ul', { class: 'probs' }, probs.map(function (p) { return h('li', { text: p }); })));
+    return card;
+  }
+  function renderRules() {
+    var v = clear($('v-rules'));
+    v.appendChild(h('p', { class: 'lede', text: 'A rule says when something happens, if certain things are true, then do this. The mod reads your rules at the start of every play.' }));
+    var live = S.rules.filter(function (r) { return !r.off; }), bad = live.filter(function (r) { return WS.problems(r, S.rules, T).length; }).length;
+    function text() { return WS.rulesText(S.rules.filter(function (r) { return r.off || !WS.problems(r, S.rules, T).length; }), T); }
+    var imp = null;
+    v.appendChild(h('div', { class: 'bar' }, fileButtons('rbmod_rules.txt', text).concat([
+      h('button', { class: 'btn', type: 'button', text: 'Add a rule', onclick: function () { if (S.rules.length >= L.rules) { toast('The mod reads up to ' + L.rules + ' rules.'); return; } S.rules.unshift(newRule()); save(); renderRules(); tally(); } })
+    ])));
+    if (bad) v.appendChild(h('p', { class: 'note', text: bad + (bad === 1 ? ' rule needs' : ' rules need') + ' fixing and will be left out of the file until then.' }));
+    if (buttonLabels().length > L.buttons) v.appendChild(h('p', { class: 'note', text: 'Your rules add more than ' + L.buttons + ' different buttons. The pre-snap panel shows the first ' + L.buttons + ' on any one play.' }));
+    S.rules.forEach(function (r) { v.appendChild(ruleCard(r)); });
+    v.appendChild(h('h3', { class: 'sub', text: S.rules.length ? 'Add a ready-made set' : 'Start from a ready-made set' }));
+    v.appendChild(h('div', { class: 'examples' }, EX.map(function (e) {
+      return h('div', { class: 'ex' }, [h('div', {}, [h('b', { text: e.title }), h('span', { text: e.about })]),
+        h('button', { class: 'btn small', type: 'button', text: 'Add', 'aria-label': 'Add ' + e.title, onclick: function () {
+          e.rules.forEach(function (r) { var c = JSON.parse(JSON.stringify(r)); c.id = uid(); c.conds = c.conds || []; S.rules.push(c); });
+          save(); renderRules(); tally(); toast('Added "' + e.title + '". Change anything you like, then save the file.');
+        } })]);
+    })));
+    v.appendChild(h('details', { class: 'raw' }, [h('summary', { text: 'See the file' }), h('pre', { class: 'file', text: text() })]));
+  }
+
+  // ---------- Report ----------
+  function sampleGame() {     // a made-up game, clearly marked as an example until a real file is loaded
+    var seed = 7, out = [], us = 0, them = 0, t = 1794300000, dn = 1, togo = 10, legs = 100;
+    function rnd() { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; }
+    for (var i = 0; i < 58; i++) {
+      var run = rnd() < 0.3, play = 'none', quick = 0, held = 0, yds, end = 'down', caught = 0, broken = 0;
+      if (run) { yds = Math.round((rnd() * 9 - 2 + (legs >= 75 ? 2 : 0)) * 10) / 10; legs = Math.max(0, legs - 16); }
+      else {
+        var u = rnd(); play = u < 0.22 ? 'pick' : u < 0.62 ? 'whiff' : u < 0.74 ? 'breakup' : 'hit';
+        held = Math.round((0.8 + rnd() * 2.2) * 100) / 100; quick = held <= 1.2 ? 1 : held >= 2 ? 0 : Math.round((2 - held) / 0.8 * 100) / 100;
+        legs = Math.min(100, legs + 6);
+        if (play === 'breakup') { yds = 0; end = 'inc'; broken = 1; }
+        else if (play === 'pick' && rnd() < 0.2) { yds = 0; end = 'int'; }
+        else { caught = 1; yds = Math.round((play === 'whiff' ? 4 + rnd() * 12 : 1 + rnd() * 7) * 10) / 10; }
+      }
+      var need = dn <= 1 ? 0.4 * togo : dn === 2 ? 0.6 * togo : togo, ok = yds > 0 && yds >= need ? 1 : 0;
+      if (rnd() < 0.05 && ok) { end = 'td'; us += 7; }
+      out.push({ t: t, us: us, them: them, dn: dn, togo: togo, kind: run ? 'run' : 'pass', yds: yds, ok: ok || end === 'td' ? 1 : 0, end: end, play: play, held: held, quick: quick,
+                 caught: caught, tipped: 0, broken: broken, legs: legs, pa: rnd() < 0.1 ? 1 : 0, hot: rnd() < 0.2 ? 1 : 0, pumps: 0, scr: rnd() < 0.12 ? 1 : 0, prot: rnd() < 0.2 ? 2 : 0,
+                 pdial: Math.round((0.5 + i / 300) * 100) / 100, rdial: 0.5 });
+      t += 28;
+      if (end === 'td' || end === 'int' || yds >= togo || dn === 4) { dn = 1; togo = 10; if (end !== 'td' && rnd() < 0.35) them += rnd() < 0.5 ? 7 : 3; } else { dn++; togo = Math.max(1, Math.round(togo - Math.max(0, yds))); }
+    }
+    return out;
+  }
+  function tbl(title, head, rows) {
+    return h('div', {}, [h('h3', { class: 'sub', text: title }), h('div', { class: 'tbl' }, [h('table', {}, [
+      h('thead', {}, [h('tr', {}, head.map(function (x) { return h('th', { scope: 'col', text: x }); }))]),
+      h('tbody', {}, rows.map(function (r) { return h('tr', {}, r.map(function (x, i) { return h(i ? 'td' : 'th', i ? {} : { scope: 'row', style: 'text-transform:none;letter-spacing:0;font-size:16px;color:inherit;font-weight:500' }, [String(x)]); })); }))
+    ])])]);
+  }
+  function rateRow(label, r) { return [label, r.n, r.n ? r.ok + ' (' + r.pct + '%)' : '0', r.n ? r.avg : '-']; }
+  function renderReport() {
+    var v = clear($('v-report'));
+    v.appendChild(h('p', { class: 'lede', text: 'The mod writes one line per play to rbmod_plays.txt. Load that file here to see how your offense did, game by game.' }));
+    var inp = h('input', { type: 'file', id: 'plays-file', accept: '.txt,text/plain', 'aria-label': 'Load rbmod_plays.txt', onchange: function () {
+      readFile(inp, function (text) {
+        var plays = WS.parsePlays(text);
+        if (!plays.length) { toast('No plays found in that file. Choose rbmod_plays.txt from the RetroBowl folder.'); return; }
+        report.plays = plays; report.games = WS.splitGames(plays); report.pick = report.games.length - 1; report.sample = false; renderReport();
+      });
+    } });
+    var games = report.games, pickRow = h('div', { class: 'pick' }, [inp]);
+    if (games.length > 1) pickRow.appendChild(sel(games.map(function (g, i) {
+      var d = new Date(g.t * 1000);
+      return [i, 'Game ' + (i + 1) + ' · ' + d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + ' · ' + g.plays.length + ' plays'];
+    }), report.pick, function (val) { report.pick = Number(val); renderReport(); }, 'game-pick'));
+    v.appendChild(pickRow);
+    var g = games[report.pick]; if (!g) return;
+    var s = WS.summarize(g.plays);
+    if (report.sample) v.appendChild(h('p', {}, [h('span', { class: 'sample', text: 'Example game' }), ' ', h('span', { class: 'note', text: 'Made-up numbers so you can see the layout. Load your file to replace it.' })]));
+    var known = g.us >= 0 && g.them >= 0;
+    v.appendChild(h('div', { class: 'final' }, [
+      h('strong', { text: known ? g.us + ' – ' + g.them : '–' }),
+      known ? h('em', { class: g.us > g.them ? 'w' : g.us < g.them ? 'l' : '', text: g.us > g.them ? 'You won' : g.us < g.them ? 'You lost' : 'Tied' }) : null,
+      h('span', { class: 'note', text: known ? 'Your score first, as of your last play.' : 'The score was not recorded for this game.' })
+    ]));
+    function tile(label, r, extra) { return h('div', { class: 'tile' }, [h('span', { text: label }), h('b', { text: r.n ? r.pct + '%' : '–' }), h('small', { text: r.n ? r.ok + ' of ' + r.n + ' worked · ' + r.avg + ' yds' + (extra || '') : 'none' }), h('div', { class: 'meter' }, [h('i', { style: 'width:' + r.pct + '%' })])]); }
+    v.appendChild(h('div', { class: 'tiles' }, [tile('All plays', s.all), tile('Passes', s.pass), tile('Runs', s.run)]));
+    v.appendChild(h('p', { class: 'note', style: 'margin:-8px 0 16px', text: 'The mark on each bar is 50%, the balance point. A play "works" if it gains 40% of the distance on 1st down, 60% on 2nd, or converts on 3rd and 4th.' }));
+    v.appendChild(tbl('Passing', ['', 'Count'], [['Thrown', s.pass.n], ['Caught', s.caught + (s.pass.n ? ' (' + Math.round(100 * s.caught / s.pass.n) + '%)' : '')], ['Broken up or batted', s.breakups], ['Intercepted', s.ints], ['Touchdowns, run or pass', s.tds]]));
+    var names = { pick: 'Went for the pick', whiff: 'Went for it and missed', breakup: 'Got a hand in', hit: 'Arrived with the ball' };
+    v.appendChild(tbl('What the defender did on each throw', ['His play', 'Throws', 'Worked', 'Yds / throw'], s.byPlay.map(function (r) { return rateRow(names[r.key], r); })));
+    v.appendChild(tbl('By how quickly you threw', ['Release', 'Throws', 'Worked', 'Yds / throw'], s.byRelease.map(function (r) { return rateRow(r.key, r); })));
+    v.appendChild(tbl("Runs by the back's legs", ['Legs', 'Runs', 'Worked', 'Yds / run'], s.byLegs.map(function (r) { return rateRow(r.key, r); })));
+    v.appendChild(tbl('By down', ['Down', 'Plays', 'Worked', 'Yds / play'], s.byDown.map(function (r) { return rateRow(['1st', '2nd', '3rd', '4th'][r.key - 1], r); })));
+    v.appendChild(tbl('Tools you used', ['Tool', 'Plays'], [['Play action', s.tools.pa], ['Hot route', s.tools.hot], ['Pump fakes', s.tools.pumps], ['Scrambles', s.tools.scr], ['Max protect', s.tools.max], ['Slide protection', s.tools.slide]]));
+    if (s.dial) v.appendChild(h('p', { class: 'note', text: 'Pass coverage went from ' + Math.round(s.dial.pass0 * 100) + '% to ' + Math.round(s.dial.pass1 * 100) + '% tight over the game. Run defense finished at ' + Math.round(s.dial.run1 * 100) + '%.' }));
+  }
+
+  // ---------- Files ----------
+  function renderFiles() {
+    var v = clear($('v-files'));
+    v.appendChild(h('p', { class: 'lede', text: 'Three small text files connect this page to the game. They live in the RetroBowl folder, the same place the mod keeps its log.' }));
+    v.appendChild(h('ol', { class: 'steps' }, [
+      h('li', {}, [h('b', { text: 'Save a file here' }), 'On Tune or Rules, tap the Save button. On an iPhone, choose Save to Files when the share sheet opens.']),
+      h('li', {}, [h('b', { text: 'Put it in the RetroBowl folder' }), 'In the Files app: On My iPhone, then RetroBowl. Keep the exact name, and replace the old file if there is one.']),
+      h('li', {}, [h('b', { text: 'Play' }), 'The mod re-reads both files at the start of every play, so there is nothing to reinstall or restart.']),
+      h('li', {}, [h('b', { text: 'To undo everything' }), 'Delete the file from the folder. Without it the mod uses its built-in values and no rules.'])
+    ]));
+    v.appendChild(tbl('The files', ['File', 'Who writes it'], [['rbmod_settings.txt', 'You, from Tune'], ['rbmod_rules.txt', 'You, from Rules'], ['rbmod_plays.txt', 'The mod, one line per play']]));
+    v.appendChild(h('p', { class: 'note', text: 'Needs mod build v84 or later. If a file has a mistake in it, the mod skips that line and says so in rbmod.log.' }));
+    v.appendChild(h('p', { class: 'note', text: 'Your work on this page is remembered on this device only. Presets and unsaved rules do not follow you to another phone or browser, so save the files you care about.' }));
+  }
+
+  // ---------- routing and start ----------
+  var views = { tune: renderTune, rules: renderRules, report: renderReport, files: renderFiles };
+  function route() {
+    var tab = (location.hash || '').replace('#', '');
+    if (!views[tab]) tab = 'tune';
+    Object.keys(views).forEach(function (k) { $('v-' + k).className = 'view' + (k === tab ? ' on' : ''); });
+    [].forEach.call(document.querySelectorAll('.tabs a'), function (a) { if (a.getAttribute('data-tab') === tab) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
+    views[tab]();
+  }
+  function start(data) {
+    load(data && data.S ? data.S : null);
+    report.plays = sampleGame(); report.games = WS.splitGames(report.plays); report.pick = 0;
+    window.addEventListener('hashchange', route);
+    tally(); route();
+    try {
+      if (window.claude && window.claude.use) window.claude.use('downloads').then(function (d) { if (d) { downloads = d; route(); } }, function () {});
+    } catch (e) {}
+  }
+  try { if (window.claude && window.claude.hot && window.claude.hot.snapshot) window.claude.hot.snapshot(function () { return { S: S }; }); } catch (e) {}
+  if (window.claude && window.claude.hot && window.claude.hot.ready) window.claude.hot.ready(start); else start((window.claude && window.claude.hot && window.claude.hot.data) || {});
+})();
+</script>
+</body>
+</html>
