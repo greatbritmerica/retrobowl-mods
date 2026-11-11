@@ -6,16 +6,18 @@
 #include "sys.h"
 #include "dbrain.h"
 #include "offtools.h"
+#include "tune.h"
+#include "rules.h"
 
 // A ball that is out quickly beats the coverage's read: thrown within QUICK_FULL seconds of the snap the
 // defender has half his pick chance, misses more and reacts later; the bonus fades to nothing by
 // QUICK_NONE. (Quick throws were the worst results on the board - 5 of 11 worked - because nothing
 // here looked at when the ball came out, only where it went.) Throws after a scramble get none.
-#define QUICK_FULL       1.2
-#define QUICK_NONE       2.0
-#define QUICK_PICK_CUT   0.5
-#define QUICK_WHIFF      0.15
-#define QUICK_DELAY      8       // extra frames before he reacts
+#define QUICK_FULL       T(T_QUICK_FULL)
+#define QUICK_NONE       T(T_QUICK_NONE)
+#define QUICK_PICK_CUT   T(T_QUICK_PICK_CUT)
+#define QUICK_WHIFF      T(T_QUICK_WHIFF)
+#define QUICK_DELAY      T(T_QUICK_DELAY)       // extra frames before he reacts
 
 #define DRAG_DECAY 0.986
 #define AIR_K      8.75
@@ -33,6 +35,7 @@ static struct {
     CInstance *rcv;                 // intended receiver (offense player nearest the landing spot)
     int tip, tipped, whiff_logged;      // not an undercut: the defender in the way bats it down (or misses it)
     double fdx, fdy, range;             // the throw: unit direction and predicted total range
+    double held, r_fam, r_pick, r_whiff, r_cdist, r_depth;   // this throw, kept for the report
     double quick;                       // 1 = thrown on time, 0 = held (or after a scramble)
     int play; double jdir; unsigned t_catch;    // this throw: PLAY_*; the going defender's heading; when it was caught
     int contest_done, broken;           // contested catch: rolled once per throw; knocked away
@@ -125,12 +128,12 @@ static void bal_play(int success, const char *kind, double yds, double down, dou
     // to the max on a hot streak and stay there: 50% -> middle, each 10% above/below moves it 0.12,
     // and it never drops below 0.25.
     g_rate[k] += ((success ? 1.0 : 0.0) - g_rate[k]) * 0.12;
-    double target = 0.55 + (g_rate[k] - 0.5) * 1.2;
-    if (target < 0.25) target = 0.25;
+    double target = 0.55 + (g_rate[k] - T(T_BALANCE_TARGET)) * 1.2;
+    if (target < T(T_DIAL_MIN)) target = T(T_DIAL_MIN);
     // Pass coverage may go to 1.0: at 0.85 it sat on the ceiling for two straight games while 65% of
     // passes still worked. (Picks no longer depend on this dial, so a high value means tight coverage,
     // not an interception spree.) The run side keeps 0.85.
-    double top = k == 0 ? 1.0 : 0.85;
+    double top = k == 0 ? T(T_PASS_DIAL_MAX) : T(T_RUN_DIAL_MAX);
     if (target > top) target = top;
     g_dial[k] += (target - g_dial[k]) * 0.35;
     rb_log("balance: player %s %.1f yds on %s & %.0f %s -> %s success %.0f%%, %s dial %.2f", kind, yds,
@@ -252,6 +255,13 @@ void rb_dlearn_step(CInstance *ball, CInstance *other, int human_offense) {
             rb_log("dbrain: throw lands ~%.0f yds deep, %s -> zone %d", depth,
                    side < -60 ? "left" : side > 60 ? "right" : "middle", P.zone);
             pick_target(ball, other, 1);
+            // your rules for "a pass is thrown" run here, before the defender's play is decided, so a
+            // rule can still change this throw's chances
+            rb_rctx.held = P.held; rb_rctx.depth = depth; rb_rctx.scrambled = rb_off_scrambled(); rb_rctx.is_run = 0;
+            rb_rules_fire("throw", 0);
+            P.quick = P.held < 0 || rb_off_scrambled() ? 0 : P.held <= QUICK_FULL ? 1 : P.held >= QUICK_NONE ? 0 : (QUICK_NONE - P.held) / (QUICK_NONE - QUICK_FULL);
+            P.r_depth = depth;
+            rb_log("dbrain: ball out %.1f s after the snap%s (quick-release factor %.2f)", P.held, rb_off_scrambled() ? ", after a scramble" : "", P.quick);
         }
     } else if (st == 3 && P.kind == 1 && P.zone >= 0) pick_target(ball, other, 0);
     if (st == P.prev_st || !P.fwd) return;
@@ -259,11 +269,11 @@ void rb_dlearn_step(CInstance *ball, CInstance *other, int human_offense) {
     if (P.prev_st == 2 && st == 3) {                            // thrown: predict where it lands
         P.bx0 = bx; P.by0 = by;
         P.kind = 1; P.t_throw = P.t; P.pend = 1; P.zone = -1; P.rcv = 0;
-        double held = rb_off_snap_seconds();
-        P.quick = held < 0 || rb_off_scrambled() ? 0 : held <= QUICK_FULL ? 1 : held >= QUICK_NONE ? 0 : (QUICK_NONE - held) / (QUICK_NONE - QUICK_FULL);
-        rb_log("dbrain: ball out %.1f s after the snap%s (quick-release factor %.2f)", held, rb_off_scrambled() ? ", after a scramble" : "", P.quick);
+        P.held = rb_off_snap_seconds(); P.quick = 0;
+        P.r_fam = P.r_pick = P.r_whiff = 0; P.r_cdist = -1; P.r_depth = 0; P.play = -1; P.t_catch = 0;
         P.late = rb_off_pa_bite(); P.undercut = -1; P.jumper = 0; P.tip = P.tipped = P.whiff_logged = 0; P.breakup = 0; P.contest_done = P.broken = 0;
     } else if (P.prev_st == 3 && st == 5 && P.kind == 1) { P.t_catch = P.t;  // caught
+        rb_rules_fire("catch", 0);
     } else if (st == 19 || (P.prev_st == 2 && st == 5)) P.kind = 2;         // handoff or QB run
     else if (!P.scored && (st == 4 || st == 6 || st == 7 || st == 9)) {
         P.scored = 1;
@@ -271,11 +281,29 @@ void rb_dlearn_step(CInstance *ball, CInstance *other, int human_offense) {
         if (P.kind == 1 && P.zone >= 0) learn_pass(P.zone, st == 9 ? -10 : yds);
         // a play "works" the way football counts it: 40% of the distance on 1st down, 60% on 2nd,
         // all of it on 3rd/4th (or a touchdown). A 2-yard catch on 3rd and 8 is a stop.
-        if ((P.kind == 1 || P.kind == 2) && P.extreme) {
+        if (P.kind == 1 || P.kind == 2) {
             double togo = P.togo > 0 && P.togo < 99 ? P.togo : 10;
             double need = P.down <= 1 ? 0.4 * togo : P.down == 2 ? 0.6 * togo : togo;
             int ok = st == 6 || (st == 4 && yds > 0 && yds >= need - 0.05);
-            bal_play(ok, P.kind == 1 ? "pass" : "run", yds, P.down, togo);
+            if (P.extreme) bal_play(ok, P.kind == 1 ? "pass" : "run", yds, P.down, togo);
+            // one line for the website's report
+            char off[120]; int us = -1, them = -1;
+            rb_off_report(off, sizeof off);
+            rb_score(&us, &them);
+            static const char *PLAYS[] = { "pick", "whiff", "breakup", "hit" };
+            rb_report_line("t=%ld us=%d them=%d dn=%.0f togo=%.1f kind=%s yds=%.1f ok=%d end=%s zone=%d depth=%.1f fam=%.2f play=%s pickp=%.2f whiffp=%.2f "
+                           "held=%.2f quick=%.2f late=%.2f caught=%d tipped=%d broken=%d cdist=%.0f pdial=%.2f rdial=%.2f prate=%.2f rrate=%.2f %s",
+                           (long)time(0), us, them, P.down, togo, P.kind == 1 ? "pass" : "run", yds, ok,
+                           st == 6 ? "td" : st == 7 ? "inc" : st == 9 ? "int" : "down", P.kind == 1 ? P.zone : -1, P.r_depth, P.r_fam,
+                           P.kind == 1 && P.play >= 0 && P.play <= 3 ? PLAYS[P.play] : "none", P.r_pick, P.r_whiff,
+                           P.kind == 1 ? P.held : 0.0, P.quick, P.late, P.t_catch > 0, P.tipped && !P.broken, P.broken, P.r_cdist,
+                           g_dial[0], g_dial[1], g_rate[0], g_rate[1], off);
+            // your rules for how the play ended
+            rb_rctx.yards = yds; rb_rctx.worked = ok; rb_rctx.is_run = P.kind == 2; rb_rctx.down = P.down; rb_rctx.togo = togo;
+            if (st == 6) rb_rules_fire("touchdown", 0);
+            if (st == 7) rb_rules_fire("incomplete", 0);
+            if (st == 9) rb_rules_fire("intercepted", 0);
+            rb_rules_fire("play_end", 0);
         }
         if (P.kind == 2) learn_run(yds);
     }
@@ -293,8 +321,8 @@ static double dir_to(double fx, double fy, double tx, double ty) {
 
 #define FIELD_TOP        141.0   // the sidelines (y), from where balls have gone out of bounds in the logs
 #define FIELD_BOT        458.0
-#define WHIFF_FRAMES     18      // after a miss the defender is out of it this long (0.3 s)
-#define CONTEST_REACH    28.0    // defender this close to the receiver at the catch: contested
+#define WHIFF_FRAMES     ((unsigned)T(T_WHIFF_FRAMES)) //     // after a miss the defender is out of it this long (0.3 s)
+#define CONTEST_REACH    T(T_CONTEST_REACH) //   // defender this close to the receiver at the catch: contested
 
 // One decision per throw. Most reads end with the defender arriving AT the catch (a hit, a breakup, a
 // short gain); getting in front of the ball for a pick takes a well-known route and some luck.
@@ -306,24 +334,25 @@ static void decide_read(void) {
     if (P.undercut >= 0) return;
     double f = P.zone >= 0 ? familiarity(P.zone) : 0;
     if (f > 0.85) f = 0.85;
-    double p = (0.12 + 0.33 * f) * (1.0 - P.late);                      // a pick takes a well-known route and some luck
+    double p = (T(T_PICK_BASE) + T(T_PICK_KNOWN) * f) * (1.0 - T(T_PA_PICK_CUT) * P.late);                      // a pick takes a well-known route and some luck
     p *= 1.0 - QUICK_PICK_CUT * P.quick;                                // out on time: the coverage hasn't read it yet
     // Otherwise he misses about half the time (a bit less against tight coverage, more against loose),
     // and when he doesn't miss it is a breakup 4 times in 10, a hit on the receiver the rest.
-    double whiff = 0.70 - 0.35 * rb_dbrain_pass_dial();
-    if (whiff < 0.35) whiff = 0.35;
-    if (whiff > 0.65) whiff = 0.65;
-    whiff += 0.25 * P.late;                                             // fooled by play action: misses more
+    double whiff = T(T_WHIFF_TIGHT) + 0.35 * (1.0 - rb_dbrain_pass_dial());   // (0.35 at the tightest, rising as it loosens)
+    if (whiff < T(T_WHIFF_TIGHT)) whiff = T(T_WHIFF_TIGHT);
+    if (whiff > T(T_WHIFF_LOOSE)) whiff = T(T_WHIFF_LOOSE);
+    whiff += T(T_PA_WHIFF) * P.late;                                             // fooled by play action: misses more
     whiff += QUICK_WHIFF * P.quick;                                     // and against a quick release
     if (whiff > 0.90) whiff = 0.90;                                     // (he is never certain to miss)
     double u = arc4random_uniform(10000) / 10000.0;
     if (u < p) P.play = PLAY_PICK;
     else {
         u = arc4random_uniform(10000) / 10000.0;
-        P.play = u < whiff ? PLAY_WHIFF : arc4random_uniform(100) < 40 ? PLAY_BREAKUP : PLAY_HIT;
+        P.play = u < whiff ? PLAY_WHIFF : arc4random_uniform(1000) < (unsigned)(1000 * T(T_BREAKUP_SHARE)) ? PLAY_BREAKUP : PLAY_HIT;
     }
     P.undercut = P.play == PLAY_PICK;
     P.tip = P.play == PLAY_BREAKUP;
+    P.r_fam = f; P.r_pick = p; P.r_whiff = whiff;                       // for the play report
     rb_log("dbrain: read on this throw - %s (pick chance %.0f%%, whiff chance %.0f%%, familiarity %.2f%s%s)",
            PLAY_NAME[P.play], p * 100, whiff * 100, f, P.late > 0 ? ", late from play action" : "",
            P.quick > 0.99 ? ", quick release" : P.quick > 0 ? ", fairly quick release" : "");
@@ -355,6 +384,7 @@ int rb_dbrain_ball_contact(CInstance *player, CInstance *other) {
         NearCtx n = { rb_get_builtin_real(player, SLOT_X), rb_get_builtin_real(player, SLOT_Y), 1e9, 0 };
         RValue r = rb_obj_ref(OBJ_PLAYER_DF);
         rb_with(&r, player, other, near_cb, &n);
+        P.r_cdist = n.best ? n.bd : -1;
         if (!n.best || n.bd > CONTEST_REACH) { rb_log("dbrain: open catch (nearest defender %.0f px away)", n.bd); return 0; }
         int broke = P.play == PLAY_BREAKUP && !P.tipped;
         rb_log("dbrain: contested catch (defender %.0f px away) - %s", n.bd,
@@ -376,7 +406,7 @@ int rb_dbrain_ball_contact(CInstance *player, CInstance *other) {
     decide_read();
     if (P.undercut) return 0;                                           // this one can be picked: the game decides
     double h = rb_get_inst_real(P.ball, SLOT_HEIGHT);
-    if (P.tip && !P.tipped && at_catch && h <= 45) {                                // within a leaping defender's reach (the game lets a jumping player catch up to 60)
+    if (P.tip && !P.tipped && at_catch && h <= T(T_TIP_HEIGHT)) {                                // within a leaping defender's reach (the game lets a jumping player catch up to 60)
         P.tipped = 1;
         RValue no = {0}; no.kind = RV_BOOL;
         RValue *av[1] = { &no };
@@ -406,8 +436,8 @@ void rb_dlearn_after_ai(CInstance *player) {
         // depend on how close he started, and on most throws he trailed to a spot behind the receiver,
         // which read as a defender ignoring the ball). What the balance moves now is how soon he reacts
         // and how often he comes up empty.
-        double radius = 230 * (1.0 - 0.55 * P.late);
-        unsigned delay = (unsigned)((12 - 8 * f) * (1.6 - D)) + (unsigned)(34 * P.late) + (unsigned)(QUICK_DELAY * P.quick);
+        double radius = T(T_REACT_RADIUS) * (1.0 - 0.55 * P.late);
+        unsigned delay = (unsigned)(T(T_REACT_FRAMES) * (1.0 - f * 2.0 / 3.0) * (1.6 - D)) + (unsigned)(34 * P.late) + (unsigned)(QUICK_DELAY * P.quick);
         decide_read();
         double dist = hypot(P.lx - x, P.ly - y);
         if (P.rcv && P.t - P.t_throw >= delay && dist < radius) {

@@ -3,6 +3,7 @@
 void rb_dlearn_step(CInstance *ball, CInstance *other, int human_offense);   // once per ball step
 void rb_dlearn_after_ai(CInstance *player);                                   // after s_get_destination
 int rb_dbrain_ball_contact(CInstance *player, CInstance *other);              // before the game's ball-contact check; 1 = skip it
+void rb_score(int *us, int *them);                                            // last score seen, from your side (hooks.c); -1 unknown
 void rb_dbrain_forget(void);                                                  // match objects destroyed: drop pointers
 double rb_dbrain_dial(void);            // CPU defense strength 0.1-1, steered toward ~50% stops
 double rb_dbrain_run_share(void);       // how much the player runs (0-1), as the CPU defense sees it

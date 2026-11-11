@@ -14,6 +14,8 @@
 #include "ui.h"
 #include "dbrain.h"
 #include "offtools.h"
+#include "tune.h"
+#include "rules.h"
 #include "input.h"
 
 #define SLOT_MY_ROUTE   0x100fa6ce8ULL
@@ -22,9 +24,10 @@
 #define DRAG_DECAY      0.986
 #define AIR_K           8.75
 #define RUSH_DEPTH      45.0
-#define PA_FRAMES       42
-#define PUMP_FRAMES     16
-#define MAX_PUMPS       2
+// (the numbers below are tunable from the website: tools/tunables.json -> tune.h)
+#define PA_FRAMES       ((unsigned)T(T_PA_FRAMES))
+#define PUMP_FRAMES     ((unsigned)T(T_PUMP_FRAMES))
+#define MAX_PUMPS       ((int)T(T_MAX_PUMPS))
 
 // s_set_my_route switches on the route's NAME (its case labels are the strings "route_streak", ...;
 // read from the game's static initializers). Same names as the path assets.
@@ -54,7 +57,7 @@ static struct {
     char note[96];
     CInstance *df[16]; double dfx[16]; int ndf, rusher[16];
     CInstance *ol[8]; double ol_d[8], front, rb_d; int nol;                                    // interior linemen (protection calls)
-    int fingers; int legs_done; double slide_read; int prot, prot_frames, prot_noted;                            // this play's protection, how long it held someone up
+    int fingers; int rules_fired, nhot; int legs_done; double slide_read; int prot, prot_frames, prot_noted;                            // this play's protection, how long it held someone up
 } O;
 
 // Protection call. It stays as set from play to play (shown on the button) until changed.
@@ -68,27 +71,27 @@ static int g_prot;
 // Which way you've been sliding lately (-1 = always up, +1 = always down). A defense that keeps seeing
 // the same slide brings speed off the other edge; mixing the calls keeps it honest.
 static double g_slide_lean;
-#define SLIDE_READ_FROM 0.40      // lean at which they start to catch on (about the 3rd same slide in a row)
-#define SLIDE_EDGE_MAX  0.30      // the weak-side edge rusher's extra acceleration when they're sure
+#define SLIDE_READ_FROM T(T_SLIDE_READ_FROM) //     // lean at which they start to catch on (about the 3rd same slide in a row)
+#define SLIDE_EDGE_MAX  T(T_SLIDE_EDGE_MAX) //     // the weak-side edge rusher's extra acceleration when they're sure
 
 // The back's legs. Every carry costs some (more for a long one); a play he doesn't carry gives a little
 // back; staying in on max protect costs a little instead. Tired legs are slower off the handoff. He
 // starts every one of your drives fresh (what a long drive costs him later is a question for after the
 // defense work).
 static double g_legs = 1.0;
-#define LEGS_CARRY      0.14      // per carry
-#define LEGS_PER_YARD   0.006     // extra per yard gained (to 20 yards)
-#define LEGS_REST       0.06      // back on a play he doesn't carry (0.10 let one pass undo most of a carry: he never tired)
-#define LEGS_BLOCK      0.0       // staying in to block: no rest, no cost (0.03 a play ran him to gassed without a carry)
-#define LEGS_FRESH      0.75      // at or above: full speed
-#define LEGS_WINDED     0.40      // below: gassed
-#define LEGS_FLOOR      0.65      // acceleration with nothing left
+#define LEGS_CARRY      T(T_LEGS_CARRY) //     // per carry
+#define LEGS_PER_YARD   T(T_LEGS_PER_YARD) //    // extra per yard gained (to 20 yards)
+#define LEGS_REST       T(T_LEGS_REST) //     // back on a play he doesn't carry (0.10 let one pass undo most of a carry: he never tired)
+#define LEGS_BLOCK      T(T_LEGS_BLOCK) //      // staying in to block: no rest, no cost (0.03 a play ran him to gassed without a carry)
+#define LEGS_FRESH      T(T_LEGS_FRESH) //     // at or above: full speed
+#define LEGS_WINDED     T(T_LEGS_WINDED) //     // below: gassed
+#define LEGS_FLOOR      T(T_LEGS_FLOOR) //     // acceleration with nothing left
 #define PX_PER_YD       20.5
 static const char *legs_word(void) { return g_legs >= LEGS_FRESH ? "fresh" : g_legs >= LEGS_WINDED ? "winded" : "gassed"; }
 static char g_last_prot[96];                                      // shown before the next snap
 #define BLOCK_REACH   17.0        // blocker and rusher this close: engaged
-#define MAX_HOLD      0.30        // rusher's drive while the back has him
-#define SLIDE_HOLD    0.50        // rusher's drive against the slid line
+#define MAX_HOLD      T(T_MAX_HOLD) //       // rusher's drive while the back has him
+#define SLIDE_HOLD    T(T_SLIDE_HOLD) //       // rusher's drive against the slid line
 
 // UI callbacks arrive on the main thread between frames; the step acts on them
 static volatile int g_ev_presnap, g_ev_rcv, g_ev_route, g_ev_pump;
@@ -99,15 +102,39 @@ static void cb_rcv(int i)     { g_ev_rcv = i ? i : -1; }
 static void cb_route(int i)   { g_ev_route = i ? i : -1; }
 static void cb_pump(int i)    { g_ev_pump = i ? 1 : -1; }
 
+#define RULE_BTNS 3
+static CInstance *g_other;        // "other" for instance loops started from a rule
+// what rule conditions can see about your offense right now
+static void fill_ctx(void) {
+    rb_rctx.down = rb_get_obj_real(OBJ_CONTROLLER, SLOT_DOWN);
+    rb_rctx.togo = rb_get_obj_real(OBJ_CONTROLLER, SLOT_YARDS);
+    rb_rctx.legs = g_legs * 100;
+    rb_rctx.run_share = rb_dbrain_run_share() * 100;
+    rb_rctx.pass_dial = rb_dbrain_pass_dial() * 100;
+    rb_rctx.run_dial = rb_dbrain_run_dial() * 100;
+    rb_rctx.play_action = O.pa_on;
+    rb_rctx.protection = g_prot;
+    rb_rctx.scrambled = O.scrambled;
+    rb_rctx.is_run = O.run_play;
+}
 static void show_presnap(void) {
-    const char *b[3] = { O.pa_on ? "Play action: ON" : "Play action: off", "Hot route", PROT_BTN[g_prot] };
-    char msg[300]; int n = 0;
+    const char *b[3 + RULE_BTNS] = { O.pa_on ? "Play action: ON" : "Play action: off", "Hot route", PROT_BTN[g_prot] };
+    // buttons your rules asked for (a pressed one shows ON)
+    static char rl[RULE_BTNS][48];
+    const char *rb[RULE_BTNS];
+    int nb = 3, nr = rb_rules_buttons(rb, RULE_BTNS);
+    for (int i = 0; i < nr; i++) {
+        snprintf(rl[i], sizeof rl[i], rb_rules_button_pressed(i) ? "%s: ON" : "%s", rb[i]);
+        b[nb++] = rl[i];
+    }
+    char msg[520]; int n = 0;
     msg[0] = 0;
     n += snprintf(msg + n, sizeof msg - n, "Back: %s", legs_word());
     if (O.note[0]) n += snprintf(msg + n, sizeof msg - n, "\n%s", O.note);
     if (g_last_pa[0]) n += snprintf(msg + n, sizeof msg - n, "%s%s", n ? "\n" : "", g_last_pa);
     if (g_last_prot[0]) n += snprintf(msg + n, sizeof msg - n, "%s%s", n ? "\n" : "", g_last_prot);
-    rb_ui_panel(RB_PANEL_PRESNAP, RB_SIDE_LEFT, 164, "", msg, b, 3, cb_presnap);
+    if (rb_rules_msg()[0]) n += snprintf(msg + n, sizeof msg - n, "%s%s", n ? "\n" : "", rb_rules_msg());
+    rb_ui_panel(RB_PANEL_PRESNAP, RB_SIDE_LEFT, 164, "", msg, b, nb, cb_presnap);
     O.presnap_shown = 1;
 }
 
@@ -290,6 +317,13 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
             rb_log("offtools: your snap - %d route runners%s", O.nrcv, O.offense_snap ? "" : " (not a scrimmage play: no tools)");
         }
         if (!O.offense_snap) return;
+        g_other = other;
+        if (!O.rules_fired) {                                     // your rules for "before the snap", once a play
+            O.rules_fired = 1;
+            rb_rctx.held = rb_rctx.depth = rb_rctx.yards = rb_rctx.worked = 0;
+            fill_ctx();
+            rb_rules_fire("presnap", 0);
+        }
         if (!O.presnap_shown) show_presnap();
         // menu events
         if (g_ev_presnap) {
@@ -297,6 +331,7 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
             if (e == 1) { O.pa_on = !O.pa_on; rb_log("offtools: play action %s", O.pa_on ? "on" : "off"); show_presnap(); }
             else if (e == 2) open_receivers(ball, other);
             else if (e == 3) { g_prot = (g_prot + 1) % PROT_N; rb_log("offtools: protection set to %s", PROT_NAME[g_prot]); show_presnap(); }
+            else if (e >= 4 && e < 4 + RULE_BTNS) { fill_ctx(); rb_rules_press(e - 4); show_presnap(); }
             else show_presnap();
         }
         if (g_ev_rcv) {
@@ -312,6 +347,7 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
                 else if (O.pick == 0) snprintf(who, sizeof who, "top WR");
                 else snprintf(who, sizeof who, "receiver %d", O.pick + 1);
                 apply_route(O.rcv[O.pick], ROUTES[e - 1].route, ROUTES[e - 1].name, who);
+                O.nhot++;
             }
             show_presnap();
         }
@@ -329,6 +365,9 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
         RValue d = rb_obj_ref(OBJ_PLAYER_DF);
         rb_with(&d, ball, other, df_cb, 0);
         for (int i = 0; i < O.ndf; i++) O.rusher[i] = fabs(O.dfx[i] - O.los) < RUSH_DEPTH;
+        g_other = other;
+        fill_ctx();
+        rb_rules_fire("snap", 0);                                 // your rules for "at the snap"
         if (!O.run_play) {
             double side = g_prot == PROT_UP ? -1 : g_prot == PROT_DOWN ? 1 : 0;
             if (side != 0 && g_slide_lean * side > SLIDE_READ_FROM) {
@@ -354,7 +393,7 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
             rb_log("offtools: protection %s - %d linemen%s", PROT_NAME[O.prot], O.nol, O.prot == PROT_MAX ? ", back stays in" : "");
         }
         if (O.pa_on && !O.run_play) {
-            double rs = rb_dbrain_run_share(), f = (rs - 0.15) / 0.30;   // ~30% runs already sells it well
+            double rs = rb_dbrain_run_share(), f = (rs - 0.15) / (T(T_PA_FULL_RUNS) - 0.15 > 0.01 ? T(T_PA_FULL_RUNS) - 0.15 : 0.01);   // ~30% runs already sells it well
             if (f < 0) f = 0;
             if (f > 1) f = 1;
             O.bite = 0.25 + 0.75 * f;
@@ -366,6 +405,7 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
     }
     if (!O.legs_done && (st == 4 || st == 6 || st == 7 || st == 8 || st == 9 || st == 11)) {   // play over: the back's legs
         O.legs_done = 1;
+        if (st == 11) { fill_ctx(); rb_rules_fire("sack", 0); }
         double before = g_legs;
         if (O.run_play) {
             double yds = (rb_get_builtin_real(ball, SLOT_X) - O.los) * O.fwd / PX_PER_YD;
@@ -543,6 +583,50 @@ int rb_off_blocker_ignores_ball(CInstance *player) {
                      rb_get_builtin_real(O.ball, SLOT_Y) - rb_get_builtin_real(O.qb, SLOT_Y));
     return d < 70;
 }
+// ---- what a rule can do to your players
+void rb_rules_do_legs(char op, double pct) {
+    double before = g_legs;
+    g_legs = op == '=' ? pct / 100 : g_legs + pct / 100;
+    if (g_legs > 1) g_legs = 1;
+    if (g_legs < 0) g_legs = 0;
+    rb_log("offtools: rule set the back's legs %.0f%% -> %.0f%%", before * 100, g_legs * 100);
+}
+typedef struct { int mode; double mult; int n; } SpeedCtx;         // mode 0 all defenders, 1 rushers, 2 coverage
+static void speed_one(CInstance *inst, double mult, int *n) {
+    if (!inst) return;
+    double a = rb_get_inst_real(inst, SLOT_MY_ACCEL);
+    if (a > 0 && a < 100) { rb_set_inst_real(inst, SLOT_MY_ACCEL, a * mult); (*n)++; }
+}
+static int speed_df_cb(CInstance *inst, void *vc) {
+    SpeedCtx *c = vc;
+    int rusher = fabs(rb_get_builtin_real(inst, SLOT_X) - O.los) < RUSH_DEPTH;
+    if (c->mode == 0 || (c->mode == 1) == rusher) speed_one(inst, c->mult, &c->n);
+    return 0;
+}
+// this play only (players are rebuilt every play): scale a group's acceleration, which drives speed
+void rb_rules_do_speed(const char *group, double pct) {
+    if (!O.ball || !O.fwd || pct <= 0) return;
+    double mult = pct / 100;
+    int n = 0;
+    if (!strcmp(group, "qb")) speed_one(O.qb, mult, &n);
+    else if (!strcmp(group, "back")) speed_one(O.rb, mult, &n);
+    else if (!strcmp(group, "receivers")) { for (int i = 0; i < O.nrcv; i++) speed_one(O.rcv[i], mult, &n); }
+    else if (!strcmp(group, "line")) { for (int i = 0; i < O.nol; i++) speed_one(O.ol[i], mult, &n); }
+    else {
+        SpeedCtx c = { !strcmp(group, "rushers") ? 1 : !strcmp(group, "coverage") ? 2 : 0, mult, 0 };
+        if (c.mode == 0 && strcmp(group, "defense")) { rb_log("offtools: rule speed - unknown group '%s'", group); return; }
+        RValue d = rb_obj_ref(OBJ_PLAYER_DF);
+        rb_with(&d, O.ball, g_other, speed_df_cb, &c);
+        n = c.n;
+    }
+    rb_log("offtools: rule speed %s x%.2f (%d players)", group, mult, n);
+}
+// for the play report
+void rb_off_report(char *buf, size_t n) {
+    snprintf(buf, n, "legs=%.0f pa=%d bite=%.2f prot=%d scr=%d pumps=%d hot=%d", g_legs * 100, O.pa_on, O.pa_on ? O.bite : 0.0,
+             O.prot, O.scrambled, O.pumps, O.nhot);
+}
+
 // The match objects are being destroyed (every play is rebuilt from scratch): drop every pointer.
 void rb_off_forget(void) { O.ball = 0; O.qb = O.rb = 0; O.nol = O.ndf = O.nrcv = 0; O.t_snap = 0; O.prot = 0; }
 // The other team is running its offense: your back is fresh again for your next drive.

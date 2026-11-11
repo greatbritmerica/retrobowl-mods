@@ -8,6 +8,8 @@
 #include "offtools.h"
 #include "defense.h"
 #include "dbrain.h"
+#include "tune.h"
+#include "rules.h"
 #include "camera3d.h"
 
 enum {
@@ -90,6 +92,14 @@ int rb_gate_attack(CInstance *self, int human_has_ball) {
 // game's own debug log (slog) -> rbmod.log
 static void fourth_check(const char *txt, const char *via);
 static int g_match_live;        // a ball has stepped since the match objects were last (re)built
+static CInstance *g_play_ball;  // the ball of the play in progress (every play gets a new one)
+static int g_score[2] = { -1, -1 };
+// the score from your side of it (which team is listed first changes with who you play as)
+void rb_score(int *us, int *them) {
+    int h = (int)rb_get_obj_real(OBJ_MASTER, SLOT_PLAYERTEAMINDEX);
+    if (h != 0 && h != 1) { *us = *them = -1; return; }
+    *us = g_score[h]; *them = g_score[1 - h];
+}
 // Interception return: the man with the ball, and your eleven who have to get him down.
 static struct { CInstance *who, *ball; CInstance *of[12]; int nof; double px, py, vx, vy; } g_ret;
 RValue *hook_slog(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
@@ -102,8 +112,11 @@ RValue *hook_slog(CInstance *self, CInstance *other, RValue *res, int argc, RVal
     line[n < (int)sizeof line ? n : (int)sizeof line - 1] = 0;
     rb_log("slog: %s", line);
     if (!strncmp(line, "s_create_message[", 17)) fourth_check(line, "slog");
+    const char *sc = strstr(line, "score[");                         // the game's own score line: [team 0 | team 1]
+    if (sc) { int a, b; if (sscanf(sc, "score[%d | %d]", &a, &b) == 2) { g_score[0] = a; g_score[1] = b; } }
     if (!strncmp(line, "s_destroy_match_objects", 23)) {             // ball and players are about to be freed
         g_match_live = 0;
+        g_play_ball = 0;
         g_ret.who = 0; g_ret.nof = 0;
         rb_off_forget(); rb_dbrain_forget();
     }
@@ -153,7 +166,7 @@ static void cpu_fourth_action(CInstance *self, CInstance *other) {
     g_cpu_clearing = 0;
 }
 
-#define PURSUIT_BURST 1.25          // your players' burst while chasing an interception down
+#define PURSUIT_BURST T(T_PURSUIT_BURST) //         // your players' burst while chasing an interception down
 static double g_def_mult = 1.0;     // the burst boost the CPU defense got this play
 static int holder_cb(CInstance *inst, void *ctx) { *(CInstance **)ctx = inst; return 1; }
 static int fastest_cb(CInstance *inst, void *ctx) {
@@ -192,7 +205,7 @@ static void int_return_fix(CInstance *ball, CInstance *other) {
         RValue of = rb_obj_ref(OBJ_PLAYER_OF);
         rb_with(&of, ball, other, fastest_cb, &fastest);
         double na = a / g_def_mult;
-        if (fastest > 0 && na > fastest * 0.9) na = fastest * 0.9;
+        if (fastest > 0 && na > fastest * T(T_RETURN_SPEED)) na = fastest * T(T_RETURN_SPEED);
         rb_set_inst_real(who, SLOT_MY_ACCEL, na);
         rb_log("int return: returner slowed (acceleration %.3f -> %.3f; your fastest player %.3f)", a, na, fastest);
     }
@@ -206,7 +219,7 @@ static void int_return_fix(CInstance *ball, CInstance *other) {
 }
 
 // ---- CPU athleticism: on Extreme the CPU's players get a burst boost every play (both sides of the ball)
-#define CPU_ACCEL_BOOST 1.35
+#define CPU_ACCEL_BOOST T(T_CPU_OFF_BOOST)
 typedef struct { int n; double before, after, mult; } BoostCtx;
 static int boost_cb(CInstance *inst, void *vc) {
     BoostCtx *c = vc;
@@ -233,7 +246,7 @@ static void cpu_boost(CInstance *ball, CInstance *other, int cpu_offense) {
     if (st != 0) return;                                    // boost at the line, once per play
     done_ball = ball;
     if (rb_get_obj_real(OBJ_MASTER, SLOT_OP_DIFFICULTY) != 4) return;
-    BoostCtx c = { 0, 0, 0, cpu_offense ? CPU_ACCEL_BOOST : 1.0 + 0.5 * rb_dbrain_dial() };
+    BoostCtx c = { 0, 0, 0, cpu_offense ? CPU_ACCEL_BOOST : 1.0 + T(T_CPU_DEF_BOOST) * rb_dbrain_dial() };
     RValue r = rb_obj_ref(cpu_offense ? OBJ_PLAYER_OF : OBJ_PLAYER_DF);
     rb_with(&r, ball, other, boost_cb, &c);
     if (!cpu_offense) g_def_mult = c.mult;
@@ -245,6 +258,13 @@ static void cpu_boost(CInstance *ball, CInstance *other, int cpu_offense) {
 RValue *hook_update_ball(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
     rb_frame++;
     g_match_live = 1;
+    if (self != g_play_ball) {                                       // a new play: pick up edited settings and rules
+        g_play_ball = self;
+        rb_tune_load();
+        rb_rules_load();
+        rb_tune_play_reset();
+        rb_rules_new_play();
+    }
     double human = rb_get_obj_real(OBJ_MASTER, SLOT_PLAYERTEAMINDEX);
     double poss = rb_get_obj_real(OBJ_CONTROLLER, SLOT_POSSESSION);
     int cpu_offense = human >= 0 && poss >= 0 && poss != human;
