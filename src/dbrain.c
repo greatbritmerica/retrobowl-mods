@@ -293,7 +293,7 @@ static double dir_to(double fx, double fy, double tx, double ty) {
 
 #define FIELD_TOP        141.0   // the sidelines (y), from where balls have gone out of bounds in the logs
 #define FIELD_BOT        458.0
-#define WHIFF_FRAMES     20      // after a miss the defender overruns the catch this long (1/3 s)
+#define WHIFF_FRAMES     18      // after a miss the defender is out of it this long (0.3 s)
 #define CONTEST_REACH    28.0    // defender this close to the receiver at the catch: contested
 
 // One decision per throw. Most reads end with the defender arriving AT the catch (a hit, a breakup, a
@@ -415,6 +415,9 @@ void rb_dlearn_after_ai(CInstance *player) {
                 double jx = rb_get_builtin_real(P.jumper, SLOT_X), jy = rb_get_builtin_real(P.jumper, SLOT_Y);
                 if (jx > -9000 && hypot(P.lx - jx, P.ly - jy) <= dist) return;
             }
+            if (P.jumper != player)
+                rb_log("dbrain: defender at %.0f,%.0f goes for the ball (%.0f px from where it comes down %.0f,%.0f; thrown from %.0f,%.0f)",
+                       x, y, dist, P.lx, P.ly, P.bx0, P.by0);
             P.jumper = player;
             double rx = rb_get_builtin_real(P.rcv, SLOT_X), ry = rb_get_builtin_real(P.rcv, SLOT_Y);
             if (rx > -9000) {
@@ -446,16 +449,17 @@ void rb_dlearn_after_ai(CInstance *player) {
                 } else {
                     double bx = rb_get_builtin_real(P.ball, SLOT_X), by = rb_get_builtin_real(P.ball, SLOT_Y);
                     rb_set_inst_real(player, SLOT_JDIR, dir_to(x, y, bx, by));
-                    rb_set_inst_real(player, SLOT_JFORCE, 0.12);
+                    rb_set_inst_real(player, SLOT_JFORCE, 0.0);              // (planted: no drifting toward the passer)
                 }
             }
         }
     } else if (st == 5 && P.kind == 1 && P.play == PLAY_WHIFF && player == P.jumper && P.t - P.t_catch < WHIFF_FRAMES) {
-        // he went for the ball and missed: his momentum carries him past the receiver for a moment
-        // (but not over the sideline: there he just pulls up)
-        int edge = y < FIELD_TOP + 14 || y > FIELD_BOT - 14;
+        // He went for the ball and missed. He used to keep running on his heading for a third of a
+        // second - and because he attacks the ball from the quarterback's side of the receiver, that
+        // heading pointed into the backfield: on a throw out wide he looked like he was rushing the QB
+        // after the ball was gone. Now he just loses a beat where he lunged, then plays on.
         rb_set_inst_real(player, SLOT_JDIR, P.jdir);
-        rb_set_inst_real(player, SLOT_JFORCE, edge ? 0.0 : 1.0);
+        rb_set_inst_real(player, SLOT_JFORCE, 0.0);
     } else if (st == 5 && P.kind == 2) {                                // run: only if the player lives off it
         double a = run_alert() * (0.4 + 0.8 * rb_dbrain_run_dial());
         if (a <= 0) return;
