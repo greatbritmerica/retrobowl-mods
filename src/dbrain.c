@@ -34,6 +34,7 @@ static struct {
     double lx, ly, bx0, by0, down, togo; int zone, scored, pend; unsigned t, t_throw;
     CInstance *rcv;                 // intended receiver (offense player nearest the landing spot)
     int tip, tipped, whiff_logged;      // not an undercut: the defender in the way bats it down (or misses it)
+    double prx, pry, rvx, rvy; unsigned rt;     // the target receiver: last position, velocity, frame
     double fdx, fdy, range;             // the throw: unit direction and predicted total range
     double held, r_fam, r_pick, r_whiff, r_cdist, r_depth;   // this throw, kept for the report
     double quick;                       // 1 = thrown on time, 0 = held (or after a scramble)
@@ -271,7 +272,7 @@ void rb_dlearn_step(CInstance *ball, CInstance *other, int human_offense) {
         P.kind = 1; P.t_throw = P.t; P.pend = 1; P.zone = -1; P.rcv = 0;
         P.held = rb_off_snap_seconds(); P.quick = 0;
         P.r_fam = P.r_pick = P.r_whiff = 0; P.r_cdist = -1; P.r_depth = 0; P.play = -1; P.t_catch = 0;
-        P.late = rb_off_pa_bite(); P.undercut = -1; P.jumper = 0; P.tip = P.tipped = P.whiff_logged = 0; P.breakup = 0; P.contest_done = P.broken = 0;
+        P.late = rb_off_pa_bite(); P.undercut = -1; P.jumper = 0; P.tip = P.tipped = P.whiff_logged = 0; P.breakup = 0; P.contest_done = P.broken = 0; P.rvx = P.rvy = 0; P.rt = 0;
     } else if (P.prev_st == 3 && st == 5 && P.kind == 1) { P.t_catch = P.t;  // caught
         rb_rules_fire("catch", 0);
     } else if (st == 19 || (P.prev_st == 2 && st == 5)) P.kind = 2;         // handoff or QB run
@@ -329,7 +330,7 @@ static double dir_to(double fx, double fy, double tx, double ty) {
 // What the defender who goes for the ball does with it, decided once per throw. He ALWAYS goes for it;
 // the difference is how it turns out.
 enum { PLAY_PICK, PLAY_WHIFF, PLAY_BREAKUP, PLAY_HIT };
-static const char *PLAY_NAME[] = { "PICK ATTEMPT - gets in front of it", "goes for it and whiffs", "gets a hand in (breakup)", "arrives with the ball (hit at the catch)" };
+static const char *PLAY_NAME[] = { "PICK ATTEMPT - gets in front of it", "breaks late (receiver beats him)", "gets a hand in (breakup)", "arrives with the ball (hit at the catch)" };
 static void decide_read(void) {
     if (P.undercut >= 0) return;
     double f = P.zone >= 0 ? familiarity(P.zone) : 0;
@@ -437,8 +438,9 @@ void rb_dlearn_after_ai(CInstance *player) {
         // which read as a defender ignoring the ball). What the balance moves now is how soon he reacts
         // and how often he comes up empty.
         double radius = T(T_REACT_RADIUS) * (1.0 - 0.55 * P.late);
-        unsigned delay = (unsigned)(T(T_REACT_FRAMES) * (1.0 - f * 2.0 / 3.0) * (1.6 - D)) + (unsigned)(34 * P.late) + (unsigned)(QUICK_DELAY * P.quick);
         decide_read();
+        unsigned delay = (unsigned)(T(T_REACT_FRAMES) * (1.0 - f * 2.0 / 3.0) * (1.6 - D)) + (unsigned)(34 * P.late) + (unsigned)(QUICK_DELAY * P.quick);
+        if (P.play == PLAY_WHIFF) delay += (unsigned)T(T_WHIFF_FRAMES) + 14;   // a miss: he reads it a beat late
         double dist = hypot(P.lx - x, P.ly - y);
         if (P.rcv && P.t - P.t_throw >= delay && dist < radius) {
             if (P.jumper && P.jumper != player) {                       // one man goes: the closest
@@ -450,46 +452,41 @@ void rb_dlearn_after_ai(CInstance *player) {
                        x, y, dist, P.lx, P.ly, P.bx0, P.by0);
             P.jumper = player;
             double rx = rb_get_builtin_real(P.rcv, SLOT_X), ry = rb_get_builtin_real(P.rcv, SLOT_Y);
-            if (rx > -9000) {
-                // at the ball: a step in front of the receiver, in the ball's path. Only the man who is
-                // going to arrive with it (a hit) aims just behind the receiver instead.
-                double fx = P.lx - P.bx0, fy = P.ly - P.by0, fl = hypot(fx, fy);
-                double lag = P.play == PLAY_HIT ? 12 : -8;
-                double tx = rx, ty = ry;
-                if (fl > 1) {
-                    tx += fx / fl * lag; ty += fy / fl * lag;
-                    if (P.play == PLAY_WHIFF) {                         // the miss: he flashes across in front of the
-                        double px = -fy / fl * 20, py = fx / fl * 20;   // receiver, a body-width off, and sails by
-                        if (hypot(tx + px - x, ty + py - y) > hypot(tx - px - x, ty - py - y)) { px = -px; py = -py; }
-                        // by the sideline the miss goes to the field side, never out of bounds
-                        if (ty + py < FIELD_TOP + 14 || ty + py > FIELD_BOT - 14) { px = -px; py = -py; }
-                        tx += px; ty += py;
-                    }
-                }
-                // Toward a sideline the spot could land out of bounds, and he chased it there.
-                if (ty < FIELD_TOP + 8) ty = FIELD_TOP + 8;
-                if (ty > FIELD_BOT - 8) ty = FIELD_BOT - 8;
-                // On a longer throw he gets to the spot before the ball does. He used to keep driving at
-                // full speed with his heading frozen, ran through it, turned back, ran through it again.
-                // Now he settles there, squared up to the ball, until it arrives.
-                if (hypot(tx - x, ty - y) > 10) {
-                    P.jdir = dir_to(x, y, tx, ty);
-                    rb_set_inst_real(player, SLOT_JDIR, P.jdir);
-                    rb_set_inst_real(player, SLOT_JFORCE, 1.0);
-                } else {
-                    double bx = rb_get_builtin_real(P.ball, SLOT_X), by = rb_get_builtin_real(P.ball, SLOT_Y);
-                    rb_set_inst_real(player, SLOT_JDIR, dir_to(x, y, bx, by));
-                    rb_set_inst_real(player, SLOT_JFORCE, 0.0);              // (planted: no drifting toward the passer)
-                }
+            if (rx < -9000) return;
+            // He plays it honestly every time: reads it, breaks, and runs to where the receiver and the
+            // ball will MEET (not where the receiver is now), then attacks the ball. The outcome is not
+            // acted out with his feet any more - no sidestep for a miss, no standing still waiting, no
+            // freeze afterwards. A miss is simply a later break (see delay), and pick / breakup / catch
+            // is settled at the moment of contact (rb_dbrain_ball_contact).
+            if (P.t != P.rt) {                                          // receiver's velocity, smoothed
+                if (P.rt) { P.rvx += (rx - P.prx - P.rvx) * 0.35; P.rvy += (ry - P.pry - P.rvy) * 0.35; }
+                P.prx = rx; P.pry = ry; P.rt = P.t;
             }
+            double bx = rb_get_builtin_real(P.ball, SLOT_X), by = rb_get_builtin_real(P.ball, SLOT_Y);
+            double flown = hypot(bx - P.bx0, by - P.by0), frames = P.t - P.t_throw;
+            double spd = frames > 2 ? flown / frames : 6, left = spd > 0.5 ? (P.range - flown) / spd : 30;
+            if (left < 0) left = 0;
+            if (left > 90) left = 90;
+            double cx = rx + P.rvx * left, cy = ry + P.rvy * left;      // where they meet
+            double fx = cx - P.bx0, fy = cy - P.by0, fl = hypot(fx, fy);
+            double lag = P.play == PLAY_PICK || P.play == PLAY_BREAKUP ? -10 : -2;   // in front of him, in the ball's path
+            double tx = cx, ty = cy;
+            if (fl > 1) { tx += fx / fl * lag; ty += fy / fl * lag; }
+            if (ty < FIELD_TOP + 8) ty = FIELD_TOP + 8;                 // never chase it out of bounds
+            if (ty > FIELD_BOT - 8) ty = FIELD_BOT - 8;
+            double force = 1.0;
+            if (hypot(tx - x, ty - y) < 12) {
+                // There early: in the last moments attack the ball; before that, stay on the spot as it
+                // moves with the receiver (shadowing him, not standing still, not running at the passer).
+                if (left < 10) { tx = bx; ty = by; } else force = 0.6;
+            }
+            P.jdir = dir_to(x, y, tx, ty);
+            rb_set_inst_real(player, SLOT_JDIR, P.jdir);
+            rb_set_inst_real(player, SLOT_JFORCE, force);
+            if (P.t % 10 == 0)
+                rb_log("dbrain: trace f%u - defender %.0f,%.0f -> %.0f,%.0f (receiver %.0f,%.0f moving %.1f,%.1f; ball meets him in %.0f frames)",
+                       P.t, x, y, tx, ty, rx, ry, P.rvx, P.rvy, left);
         }
-    } else if (st == 5 && P.kind == 1 && P.play == PLAY_WHIFF && player == P.jumper && P.t - P.t_catch < WHIFF_FRAMES) {
-        // He went for the ball and missed. He used to keep running on his heading for a third of a
-        // second - and because he attacks the ball from the quarterback's side of the receiver, that
-        // heading pointed into the backfield: on a throw out wide he looked like he was rushing the QB
-        // after the ball was gone. Now he just loses a beat where he lunged, then plays on.
-        rb_set_inst_real(player, SLOT_JDIR, P.jdir);
-        rb_set_inst_real(player, SLOT_JFORCE, 0.0);
     } else if (st == 5 && P.kind == 2) {                                // run: only if the player lives off it
         double a = run_alert() * (0.4 + 0.8 * rb_dbrain_run_dial());
         if (a <= 0) return;

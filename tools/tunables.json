@@ -57,24 +57,24 @@
  {
   "group": "Coverage",
   "key": "whiff_tight",
-  "label": "Whiff chance against tight coverage",
+  "label": "Chance he gets beaten, tight coverage",
   "def": 0.35,
   "min": 0,
   "max": 1,
   "step": 0.01,
   "pct": true,
-  "help": "How often the defender goes for the ball and misses when the coverage is at its tightest."
+  "help": "How often the defender reads it late and the receiver beats him, when the coverage is at its tightest."
  },
  {
   "group": "Coverage",
   "key": "whiff_loose",
-  "label": "Whiff chance against loose coverage",
+  "label": "Chance he gets beaten, loose coverage",
   "def": 0.65,
   "min": 0,
   "max": 1,
   "step": 0.01,
   "pct": true,
-  "help": "The most he whiffs when coverage is loose."
+  "help": "The most often he gets beaten, when coverage is loose."
  },
  {
   "group": "Coverage",
@@ -85,7 +85,7 @@
   "max": 1,
   "step": 0.05,
   "pct": true,
-  "help": "When he gets there, how often he knocks the pass away. The rest of the time he hits the receiver at the catch."
+  "help": "When he is on time, how often he knocks the pass away. The rest of the time he arrives with the ball and makes the tackle."
  },
  {
   "group": "Coverage",
@@ -130,12 +130,12 @@
  {
   "group": "Coverage",
   "key": "whiff_frames",
-  "label": "Recovery after a whiff (frames)",
+  "label": "How late he breaks when he gets beaten (frames)",
   "def": 18,
   "min": 0,
   "max": 60,
   "step": 1,
-  "help": "How long he is out of the play after missing."
+  "help": "On a throw where he gets beaten, he reads it this much later (plus a little) and arrives after the catch."
  },
  {
   "group": "Quick release",
@@ -171,7 +171,7 @@
  {
   "group": "Quick release",
   "key": "quick_whiff",
-  "label": "Quick release adds to the whiff chance",
+  "label": "Quick release adds to the chance he gets beaten",
   "def": 0.15,
   "min": 0,
   "max": 0.6,
@@ -213,7 +213,7 @@
  {
   "group": "Play action and pump",
   "key": "pa_whiff",
-  "label": "Play action adds to the whiff chance",
+  "label": "Play action adds to the chance he gets beaten",
   "def": 0.25,
   "min": 0,
   "max": 0.6,
