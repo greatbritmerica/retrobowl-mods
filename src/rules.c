@@ -27,6 +27,7 @@
 #include "sys.h"
 #include "tune.h"
 #include "rules.h"
+#include "script.h"
 #include "tune_table.inc"
 
 // ------------------------------------------------------------------------------------------- files
@@ -127,7 +128,7 @@ static struct { char name[32]; double v; } g_vars[MAXV];
 static int g_nvars;
 static char g_btn[MAXB][32]; static int g_nbtn; static char g_btn_pressed[MAXB];
 static char g_msg[200], g_carry[200], g_both[404];
-static int g_firing_presnap;
+static int g_firing_presnap, g_no_scripts;
 RuleCtx rb_rctx;
 
 static double *var_slot(const char *name, int create) {
@@ -333,6 +334,11 @@ int rb_rules_fire(const char *ev, const char *arg) {
         fired++;
         rb_log("rules: \"%s\" fired (%s%s%s)", r->name, ev, arg ? " " : "", arg ? arg : "");
     }
+    if (!g_no_scripts) {
+        int was = g_firing_presnap;
+        rb_script_fire(ev, arg);                             // play scripts for the same moment
+        g_firing_presnap = was;
+    }
     return fired;
 }
 // pre-snap button i was pressed: remember it for this play and fire its rules
@@ -347,8 +353,31 @@ void rb_rules_press(int i) {
     // pressed.<button>, so they happen once, when the play really starts.)
     rb_tune_play_reset();
     g_msg[0] = 0;
+    g_no_scripts = 1;                                        // (scripts already ran for this play's presnap)
     rb_rules_fire("presnap", 0);
     for (int k = 0; k < g_nbtn; k++) if (g_btn_pressed[k]) rb_rules_fire("button", g_btn[k]);
+    g_no_scripts = 0;
+}
+
+// ------------------------------------------------------------------------------- bridge for scripts
+int sh_pressed(const char *label) {
+    for (int i = 0; i < g_nbtn; i++) if (!strcmp(g_btn[i], label)) return g_btn_pressed[i];
+    return 0;
+}
+void sh_button(const char *label) {
+    for (int k = 0; k < g_nbtn; k++) if (!strcmp(g_btn[k], label)) return;
+    if (g_nbtn < MAXB) snprintf(g_btn[g_nbtn++], sizeof g_btn[0], "%s", label);
+}
+void sh_msg(const char *text) {
+    char *buf = g_firing_presnap ? g_msg : g_carry;
+    int n = (int)strlen(buf);
+    snprintf(buf + n, sizeof g_msg - (size_t)n, "%s%s", n ? "\n" : "", text);
+}
+int sh_tune(const char *key, double v, int add) {
+    int id = rb_tune_find(key);
+    if (id < 0) return 0;
+    rb_tune_apply(id, add ? '+' : '=', v, 0);
+    return 1;
 }
 
 // ------------------------------------------------------------------------------------------ report

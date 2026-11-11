@@ -51,6 +51,10 @@ h1, h2, h3 { text-wrap: balance; margin: 0; }
   repeating-linear-gradient(90deg, #f4f1e4 0 2px, transparent 2px 60px) 0 0 / 100% 14px no-repeat,
   repeating-linear-gradient(90deg, #5d6a60 0 1px, transparent 1px 12px) 0 6px / 100% 8px no-repeat; }
 
+.code { width: 100%; min-height: 340px; font: 13px/1.5 ui-monospace, Menlo, monospace; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink); tab-size: 2; white-space: pre; overflow-x: auto; }
+.chk { margin: 8px 0 14px; font-weight: 600; } .chk.ok { color: var(--turf); } .chk.bad { color: #b3261e; }
+.ref dt { font: 600 13px ui-monospace, Menlo, monospace; margin-top: 8px; } .ref dd { margin: 2px 0 0 0; color: var(--muted); }
+.names { max-height: 260px; overflow: auto; font: 12px/1.6 ui-monospace, Menlo, monospace; border: 1px solid var(--line); border-radius: 8px; padding: 8px; word-break: break-all; }
 /* tabs */
 .tabs { position: sticky; top: 0; z-index: 5; background: var(--field); border-bottom: 1px solid var(--line); }
 .tabs-in { max-width: 760px; margin: 0 auto; padding: 0 8px; display: flex; gap: 2px; overflow-x: auto; }
@@ -171,24 +175,28 @@ code { font: 14px ui-monospace, Menlo, Consolas, monospace; background: var(--wa
 <nav class="tabs" aria-label="Sections"><div class="tabs-in">
   <a href="#tune" data-tab="tune">Tune</a>
   <a href="#rules" data-tab="rules">Rules</a>
+  <a href="#script" data-tab="script">Script</a>
   <a href="#report" data-tab="report">Report</a>
   <a href="#files" data-tab="files">Files</a>
 </div></nav>
 <div class="wrap">
   <section class="view" id="v-tune"></section>
   <section class="view" id="v-rules"></section>
+  <section class="view" id="v-script"></section>
   <section class="view" id="v-report"></section>
   <section class="view" id="v-files"></section>
 </div>
 <div class="toast" id="toast" role="status" hidden></div>
 <script>/*CORE*/</script>
 <script>/*EXAMPLES*/</script>
+<script>/*SCRIPT*/</script>
+<script>/*NAMES*/</script>
 <script>
 (function () {
   'use strict';
   var T = /*TUNABLES*/[];
   var WS = window.WS, EX = window.WS_EXAMPLES, L = WS.LIMITS;
-  var S = { values: {}, rules: [], presets: {}, open: {} };
+  var S = { values: {}, rules: [], presets: {}, open: {}, script: '' };
   var downloads = null, report = { plays: [], games: [], pick: 0, sample: true };
 
   // ---------- small helpers ----------
@@ -213,7 +221,7 @@ code { font: 14px ui-monospace, Menlo, Consolas, monospace; background: var(--wa
   function save() { try { localStorage.setItem('rbws1', JSON.stringify(S)); } catch (e) {} }
   function load(d) {
     try { d = d || JSON.parse(localStorage.getItem('rbws1') || 'null'); } catch (e) { d = null; }
-    if (d && typeof d === 'object') { S.values = d.values || {}; S.rules = Array.isArray(d.rules) ? d.rules : []; S.presets = d.presets || {}; S.open = d.open || {}; }
+    if (d && typeof d === 'object') { S.values = d.values || {}; S.rules = Array.isArray(d.rules) ? d.rules : []; S.presets = d.presets || {}; S.open = d.open || {}; S.script = typeof d.script === 'string' ? d.script : ''; }
   }
   function sel(options, value, onchange, id) {
     var s = h('select', { id: id, onchange: function () { onchange(s.value); } }, options.map(function (o) { return h('option', { value: String(o[0]), text: o[1] }); }));
@@ -550,23 +558,71 @@ code { font: 14px ui-monospace, Menlo, Consolas, monospace; background: var(--wa
     if (s.dial) v.appendChild(h('p', { class: 'note', text: 'Pass coverage went from ' + Math.round(s.dial.pass0 * 100) + '% to ' + Math.round(s.dial.pass1 * 100) + '% tight over the game. Run defense finished at ' + Math.round(s.dial.run1 * 100) + '%.' }));
   }
 
+  // ---------- Script ----------
+  var SC = window.WS_SCRIPT, NM = window.WS_NAMES || { vars: [], routines: [] }, nameKind = 'vars', nameQ = '';
+  function renderScript() {
+    var v = clear($('v-script'));
+    v.appendChild(h('p', { class: 'lede', text: 'A play script is a small program the mod runs during your plays. It can line players up, steer them, carry a throw, add buttons and change the game\'s own values. It goes in rbmod_script.txt and is re-read every play.' }));
+    var status = h('p', { class: 'chk' });
+    var ta = h('textarea', { class: 'code', id: 'script-text', spellcheck: 'false', autocapitalize: 'off', autocorrect: 'off', 'aria-label': 'Script', value: S.script,
+      oninput: function () { S.script = ta.value; save(); checkNow(); } });
+    function checkNow() {
+      if (!ta.value.trim()) { status.className = 'chk'; status.textContent = 'Empty. Add an example below or write your own.'; return; }
+      var r = SC.check(ta.value);
+      if (r.ok) { status.className = 'chk ok'; status.textContent = 'Looks right: ' + r.handlers.length + ' on block' + (r.handlers.length === 1 ? '' : 's') + ' (' + r.handlers.join(', ') + '). Game values are checked when it runs.'; }
+      else { status.className = 'chk bad'; status.textContent = 'Line ' + r.line + ': ' + r.msg; }
+    }
+    var imp = h('input', { type: 'file', id: 'imp-script', accept: '.txt,text/plain', hidden: true, onchange: function () {
+      readFile(imp, function (t) { ta.value = S.script = t; save(); checkNow(); toast('Loaded the script.'); }); } });
+    v.appendChild(ta); v.appendChild(status);
+    v.appendChild(h('div', { class: 'bar' }, fileButtons('rbmod_script.txt', function () { return ta.value; }).concat([
+      h('button', { class: 'btn', type: 'button', text: 'Load a file', onclick: function () { imp.click(); } }), imp])));
+    checkNow();
+    v.appendChild(h('h3', { class: 'sub', text: 'Ready-made scripts' }));
+    var exs = h('div', { class: 'examples' }); v.appendChild(exs);
+    SC.EXAMPLES.forEach(function (ex) {
+      exs.appendChild(h('div', { class: 'ex' }, [h('div', {}, [h('b', { text: ex.title }), h('span', { text: ex.about })]),
+        h('button', { class: 'btn', type: 'button', text: 'Add to my script', onclick: function () {
+          var cur = ta.value.replace(/\s+$/, '');
+          if (cur.indexOf(ex.text.split('\n')[0]) >= 0) { toast(ex.title + ' is already in your script.'); return; }
+          ta.value = S.script = (cur ? cur + '\n\n' : '') + ex.text; save(); checkNow(); toast('Added ' + ex.title + '.'); } })]));
+    });
+    v.appendChild(h('h3', { class: 'sub', text: 'How it reads' }));
+    v.appendChild(h('pre', { class: 'code', style: 'min-height:0', text:
+      'on snap                      # runs when the event happens\n  if down() == 4 and togo() <= 1\n    msg("Going for it")\n  elif lead() < 0\n    tune("pick_base", 0.1)\n  else\n    stop\n  end\nend\n\non frame\n  for r in receivers()        # every receiver\n    if r.y < field_top() + 30\n      steer(r, r.x, r.y + 40)\n    end\n  end\nend\n\n# Variables you set keep their value from play to play.\n# p.name reads any game value of a player; p.name = n changes it.\n# A mistake while running switches that block off and is written to rbmod.log.' }));
+    v.appendChild(h('h3', { class: 'sub', text: 'Events' }));
+    v.appendChild(h('dl', { class: 'ref' }, [].concat.apply([], SC.EVENTS.map(function (e) { return [h('dt', { text: 'on ' + e[0] }), h('dd', { text: e[1] || 'When it happens.' })]; }))));
+    v.appendChild(h('h3', { class: 'sub', text: 'Functions' }));
+    v.appendChild(h('dl', { class: 'ref' }, [].concat.apply([], SC.FNS.map(function (f) { return [h('dt', { text: f[0] + '()' }), h('dd', { text: f[3] || 'Math.' })]; }))));
+    v.appendChild(h('h3', { class: 'sub', text: 'Game names' }));
+    v.appendChild(h('p', { class: 'note', text: 'Every value name and routine name in Retro Bowl 1.6.49, for player.name, game(), global() and call(). What a value means is not listed; log() it to find out.' }));
+    var out = h('div', { class: 'names' });
+    function list() {
+      var q = nameQ.toLowerCase(), all = NM[nameKind] || [], hit = q ? all.filter(function (n) { return n.toLowerCase().indexOf(q) >= 0; }) : all;
+      out.textContent = hit.length ? hit.slice(0, 400).join('  ') + (hit.length > 400 ? '  … ' + (hit.length - 400) + ' more' : '') : 'No names match.';
+    }
+    var q = h('input', { type: 'search', placeholder: 'Search names', 'aria-label': 'Search names', value: nameQ, oninput: function () { nameQ = q.value; list(); } });
+    v.appendChild(h('div', { class: 'bar' }, [sel([['vars', 'Values (' + NM.vars.length + ')'], ['routines', 'Routines (' + NM.routines.length + ')']], nameKind, function (k) { nameKind = k; list(); }, 'name-kind'), q]));
+    v.appendChild(out); list();
+  }
+
   // ---------- Files ----------
   function renderFiles() {
     var v = clear($('v-files'));
-    v.appendChild(h('p', { class: 'lede', text: 'Three small text files connect this page to the game. They live in the RetroBowl folder, the same place the mod keeps its log.' }));
+    v.appendChild(h('p', { class: 'lede', text: 'Four small text files connect this page to the game. They live in the RetroBowl folder, the same place the mod keeps its log.' }));
     v.appendChild(h('ol', { class: 'steps' }, [
-      h('li', {}, [h('b', { text: 'Save a file here' }), 'On Tune or Rules, tap the Save button. On an iPhone, choose Save to Files when the share sheet opens.']),
+      h('li', {}, [h('b', { text: 'Save a file here' }), 'On Tune, Rules or Script, tap the Save button. On an iPhone, choose Save to Files when the share sheet opens.']),
       h('li', {}, [h('b', { text: 'Put it in the RetroBowl folder' }), 'In the Files app: On My iPhone, then RetroBowl. Keep the exact name, and replace the old file if there is one.']),
-      h('li', {}, [h('b', { text: 'Play' }), 'The mod re-reads both files at the start of every play, so there is nothing to reinstall or restart.']),
+      h('li', {}, [h('b', { text: 'Play' }), 'The mod re-reads your files at the start of every play, so there is nothing to reinstall or restart.']),
       h('li', {}, [h('b', { text: 'To undo everything' }), 'Delete the file from the folder. Without it the mod uses its built-in values and no rules.'])
     ]));
-    v.appendChild(tbl('The files', ['File', 'Who writes it'], [['rbmod_settings.txt', 'You, from Tune'], ['rbmod_rules.txt', 'You, from Rules'], ['rbmod_plays.txt', 'The mod, one line per play']]));
-    v.appendChild(h('p', { class: 'note', text: 'Needs mod build v87 or later. If a file has a mistake in it, the mod skips that line and says so in rbmod.log.' }));
+    v.appendChild(tbl('The files', ['File', 'Who writes it'], [['rbmod_settings.txt', 'You, from Tune'], ['rbmod_rules.txt', 'You, from Rules'], ['rbmod_script.txt', 'You, from Script'], ['rbmod_plays.txt', 'The mod, one line per play']]));
+    v.appendChild(h('p', { class: 'note', text: 'Needs mod build v89 or later. If a file has a mistake in it, the mod skips that line and says so in rbmod.log.' }));
     v.appendChild(h('p', { class: 'note', text: 'Your work on this page is remembered on this device only. Presets and unsaved rules do not follow you to another phone or browser, so save the files you care about.' }));
   }
 
   // ---------- routing and start ----------
-  var views = { tune: renderTune, rules: renderRules, report: renderReport, files: renderFiles };
+  var views = { tune: renderTune, rules: renderRules, script: renderScript, report: renderReport, files: renderFiles };
   function route() {
     var tab = (location.hash || '').replace('#', '');
     if (!views[tab]) tab = 'tune';

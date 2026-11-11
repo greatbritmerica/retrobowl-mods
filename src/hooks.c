@@ -10,6 +10,7 @@
 #include "dbrain.h"
 #include "tune.h"
 #include "rules.h"
+#include "script.h"
 #include "camera3d.h"
 
 enum {
@@ -263,6 +264,7 @@ RValue *hook_update_ball(CInstance *self, CInstance *other, RValue *res, int arg
         g_play_ball = self;
         rb_tune_load();
         rb_rules_load();
+        rb_script_load();
         rb_tune_play_reset();
         rb_rules_new_play();
     }

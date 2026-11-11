@@ -16,6 +16,7 @@
 #include "offtools.h"
 #include "tune.h"
 #include "rules.h"
+#include "script.h"
 #include "input.h"
 
 #define SLOT_MY_ROUTE   0x100fa6ce8ULL
@@ -112,6 +113,12 @@ static void hail_throw(CInstance *ball);
 #define FIELD_TOP_Y 141.0       // sidelines (y)
 #define FIELD_BOT_Y 458.0
 static CInstance *g_other;        // "other" for instance loops started from a rule
+// play scripts (see "what a script can do" below)
+static struct { CInstance *p; double tx, ty, f; unsigned t; } g_steer[24];
+static int g_nsteer, g_nicons, g_in_release, g_land;
+static CInstance *g_icons[12];
+static double g_land_x, g_land_y;
+static void script_play_reset(void) { g_nsteer = g_nicons = g_land = 0; rb_script_end_play(); }
 // what rule conditions can see about your offense right now
 static void fill_ctx(void) {
     rb_rctx.down = rb_get_obj_real(OBJ_CONTROLLER, SLOT_DOWN);
@@ -241,7 +248,7 @@ static void open_routes(void) {
     rb_ui_panel(RB_PANEL_PRESNAP, 0, 150, "New route", "", b, NROUTES + 1, cb_route);
 }
 
-static void apply_route(CInstance *rcv, const char *route, const char *name, const char *who) {
+static int apply_route(CInstance *rcv, const char *route, const char *name, const char *who) {
     RValue arg = {0};
     ((void (*)(RValue *, const char *))RB(VA_RV_FROM_CSTR))(&arg, route);
     RValue *av[1] = { &arg };
@@ -255,6 +262,7 @@ static void apply_route(CInstance *rcv, const char *route, const char *name, con
     rb_log("offtools: hot route %s -> %s (%s, path %g -> %g)%s", who, name, route, before, after, ok ? "" : "  NOT APPLIED");
     if (ok) snprintf(O.note, sizeof O.note, "Hot: %s - %s", who, name);
     else snprintf(O.note, sizeof O.note, "Hot route didn't take");
+    return ok;
 }
 
 // ---------------------------------------------------------------- per frame (player on offense)
@@ -269,6 +277,7 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
     double st = rb_get_inst_real(ball, SLOT_STATE);
     if (ball != O.ball) {                                         // new play
         memset(&O, 0, sizeof O);
+        script_play_reset();
         O.ball = ball; O.prev_st = O.st = st;
         g_ev_presnap = g_ev_rcv = g_ev_route = g_ev_pump = 0;
     }
@@ -453,7 +462,9 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
     }
     if (O.pa_live && O.t - O.t_snap >= PA_FRAMES) O.pa_live = 0;
     if (st == 3 || st == 5 || st == 19) O.pa_live = 0;              // ball's out or someone has it
+    if (O.prev_st == 2 && st == 3) { g_in_release = 1; rb_script_fire("release", 0); g_in_release = 0; }
     if (O.hail && O.prev_st == 2 && st == 3) hail_throw(ball);
+    if (O.t_snap && !O.legs_done && st != 0) rb_script_fire("frame", 0);   // every frame of your play, from the snap
     if (O.hail && !O.hail_over && O.t_snap && (st == 5 || st == 4 || st == 6 || st == 7 || st == 8 || st == 9 || st == 11)) {
         if (!(st == 5 && O.prev_st != 3)) { O.hail_over = 1; rb_log("offtools: Hail Mary over (ball state %.0f)", st); }
     }
@@ -592,6 +603,8 @@ void rb_off_after_ai(CInstance *player) {
     double x = rb_get_builtin_real(player, SLOT_X), y = rb_get_builtin_real(player, SLOT_Y);
     if (x < -9000) return;
     unsigned since = O.t - O.t_snap;
+    for (int k = 0; k < g_nsteer; k++)                                    // a script is steering him this frame
+        if (g_steer[k].p == player && g_steer[k].t + 1 >= O.t) { steer(player, x, y, g_steer[k].tx, g_steer[k].ty, g_steer[k].f); return; }
     if (O.hail && !O.hail_over && hail_player(player, x, y, since)) return;
     if (O.push > 0 && since < (unsigned)T(T_PUSH_FRAMES) && (O.st == 1 || O.st == 2 || O.st == 5) && push_player(player, x, y)) return;
     if (O.pa_live && player == O.rb && since < 22) {                  // the fake handoff: across the QB
@@ -643,6 +656,101 @@ static int push_player(CInstance *player, double x, double y) {
         return 0;                                                       // (his own path, just slower)
     }
     return 0;
+}
+
+// ---- play scripts: what a script can do to the play in progress (script.h). Everything here is per play:
+// the game rebuilds the players every play, so nothing a script points at may outlive it.
+void rb_script_end_play(void) {}
+typedef struct { void **out; int n, max; } ListCtx;
+static int list_cb(CInstance *inst, void *vc) { ListCtx *c = vc; if (c->n < c->max) c->out[c->n++] = inst; return 0; }
+int sh_list(const char *which, void **out, int max) {
+    if (!O.ball) return 0;
+    if (!strcmp(which, "receivers")) { int n = 0; for (int i = 0; i < O.nrcv && n < max; i++) if (O.rcv[i]) out[n++] = O.rcv[i]; return n; }
+    ListCtx c = { out, 0, max };
+    RValue r = rb_obj_ref(!strcmp(which, "offense") ? OBJ_PLAYER_OF : OBJ_PLAYER_DF);
+    rb_with(&r, O.ball, g_other ? g_other : O.ball, list_cb, &c);
+    return c.n;
+}
+void *sh_one(const char *which) {
+    if (!strcmp(which, "qb")) return O.qb;
+    if (!strcmp(which, "back")) return O.rb;
+    if (!strcmp(which, "ball")) return O.ball;
+    return 0;
+}
+double sh_info(const char *n, int *ok) {
+    *ok = 1;
+    if (!strcmp(n, "down")) return rb_get_obj_real(OBJ_CONTROLLER, SLOT_DOWN);
+    if (!strcmp(n, "togo")) return rb_get_obj_real(OBJ_CONTROLLER, SLOT_YARDS);
+    if (!strcmp(n, "quarter")) return rb_get_obj_real(OBJ_CONTROLLER, SLOT_QUARTER);
+    if (!strcmp(n, "clock")) return rb_get_obj_real(OBJ_CONTROLLER, SLOT_MINUTES) * 60 + rb_get_obj_real(OBJ_CONTROLLER, SLOT_SECONDS);
+    if (!strcmp(n, "lead")) { int us = -1, them = -1; rb_score(&us, &them); return us >= 0 && them >= 0 ? us - them : 0; }
+    if (!strcmp(n, "goal")) return 50 - rb_get_obj_real(OBJ_CONTROLLER, SLOT_SCRIMMAGE);
+    if (!strcmp(n, "field_top")) return FIELD_TOP_Y;
+    if (!strcmp(n, "field_bottom")) return FIELD_BOT_Y;
+    if (!strcmp(n, "legs")) return g_legs * 100;
+    if (!O.ball || !O.fwd) { *ok = 0; return 0; }
+    if (!strcmp(n, "los_x")) return O.los;
+    if (!strcmp(n, "fwd")) return O.fwd;
+    if (!strcmp(n, "state")) return O.st;
+    if (!strcmp(n, "thrown")) return O.st == 3;
+    if (!strcmp(n, "since_snap")) return O.t_snap ? (O.t - O.t_snap) / 60.0 : 0;
+    if (!strcmp(n, "landing_x") || !strcmp(n, "landing_y")) {
+        double lx, ly;
+        if (g_land) { lx = g_land_x; ly = g_land_y; }
+        else if (!rb_dbrain_landing(&lx, &ly)) { *ok = 0; return 0; }
+        return n[8] == 'x' ? lx : ly;
+    }
+    *ok = 0;
+    return 0;
+}
+double sh_pos(void *p, int want_y) { return p ? rb_get_builtin_real(p, want_y ? SLOT_Y : SLOT_X) : 0; }
+void sh_place(void *p, double x, double y) {
+    if (!p) return;
+    if (y < FIELD_TOP_Y + 4) y = FIELD_TOP_Y + 4;
+    if (y > FIELD_BOT_Y - 4) y = FIELD_BOT_Y - 4;
+    rb_set_builtin_real(p, SLOT_X, x); rb_set_builtin_real(p, SLOT_Y, y);
+}
+void sh_steer(void *p, double x, double y, double f) {
+    if (!p) return;
+    int k = 0;
+    for (; k < g_nsteer; k++) if (g_steer[k].p == p) break;
+    if (k == g_nsteer) { if (g_nsteer >= 24) return; g_nsteer++; }
+    g_steer[k].p = p; g_steer[k].tx = x; g_steer[k].ty = y; g_steer[k].f = f < 0 ? 0 : f > 1 ? 1 : f; g_steer[k].t = O.t;
+}
+void sh_speed(void *p, double pct) {
+    if (!p || pct <= 0) return;
+    double a = rb_get_inst_real(p, SLOT_MY_ACCEL);
+    if (a > 0 && a < 100) rb_set_inst_real(p, SLOT_MY_ACCEL, a * pct / 100);
+}
+int sh_route(void *p, const char *route) { return p ? apply_route(p, route, route, "script") : 0; }
+void sh_icon(void *p) {
+    if (!p) return;
+    for (int i = 0; i < g_nicons; i++) if (g_icons[i] == p) return;
+    if (g_nicons < 12) g_icons[g_nicons++] = p;
+}
+// on release: the throw carries along your aim until it reaches x, on an arc of `arc` (how fast it rises:
+// a normal deep ball is about 5)
+int sh_carry(double tx, double arc) {
+    if (!g_in_release || !O.ball || !O.fwd) { rb_log("offtools: script carry() ignored - it only works in an  on release  block"); return 0; }
+    CInstance *ball = O.ball;
+    double qx = rb_get_builtin_real(ball, SLOT_X), qy = rb_get_builtin_real(ball, SLOT_Y);
+    double dir = rb_get_inst_real(ball, SLOT_DIREC) / 57.29577951308232, dx = cos(dir), dy = sin(dir);
+    if (dx * O.fwd < 0.25) { rb_log("offtools: script carry() - throw not aimed downfield, left as thrown"); return 0; }
+    double D = (tx - qx) / dx;
+    double ly = qy + dy * D;
+    if (ly < FIELD_TOP_Y + 20 && dy < 0) D = (FIELD_TOP_Y + 20 - qy) / dy;
+    if (ly > FIELD_BOT_Y - 20 && dy > 0) D = (FIELD_BOT_Y - 20 - qy) / dy;
+    if (D < 40) return 0;
+    if (arc < 1.5) arc = 1.5;
+    if (arc > 12) arc = 12;
+    double T = 2 * arc / 0.08, v = D * (1.0 - DRAG_DECAY) / (1.0 - pow(DRAG_DECAY, T));
+    double was = rb_get_inst_real(ball, SLOT_VELOCITY);
+    rb_set_inst_real(ball, SLOT_VELOCITY, v);
+    rb_set_inst_real(ball, SLOT_ZVEL, arc);
+    g_land = 1; g_land_x = qx + dx * D; g_land_y = qy + dy * D;
+    rb_log("offtools: script carries the throw %.0f px (%.0f yds) on arc %.1f - speed %.2f -> %.2f, %.0f frames in the air",
+           D, D / PX_PER_YD, arc, was, v, T);
+    return 1;
 }
 
 // ---- the Hail Mary. Everyone who matters races to the end zone - your receivers and as many deep
@@ -732,7 +840,10 @@ static double gcall(int i, const char *name, CInstance *self, int argc, double a
     return rb_call(g_fn[i], self, argc, av);
 }
 void rb_off_gui(CInstance *self) {
-    if (!O.hail || O.hail_over || !O.t_snap || !O.hail_set) return;
+    CInstance *who[12]; int nwho = 0;
+    if (g_nicons && O.t_snap && !O.legs_done) for (int i = 0; i < g_nicons; i++) who[nwho++] = g_icons[i];      // a script's icons
+    else if (O.hail && !O.hail_over && O.t_snap && O.hail_set) for (int i = 0; i < O.nrcv && nwho < 12; i++) who[nwho++] = O.rcv[i];
+    if (!nwho) return;
     double cam = gcall(0, "view_get_camera", self, 1, 0, 0, 0, 0, 0, 0, 0);
     double vx = gcall(1, "camera_get_view_x", self, 1, cam, 0, 0, 0, 0, 0, 0), vy = gcall(2, "camera_get_view_y", self, 1, cam, 0, 0, 0, 0, 0, 0);
     double vw = gcall(3, "camera_get_view_width", self, 1, cam, 0, 0, 0, 0, 0, 0), vh = gcall(4, "camera_get_view_height", self, 1, cam, 0, 0, 0, 0, 0, 0);
@@ -740,9 +851,9 @@ void rb_off_gui(CInstance *self) {
     if (!(vw > 1 && vh > 1 && gw > 1 && gh > 1)) return;
     static const double COL[6] = { 65535, 16776960, 16711935, 4235519, 65280, 16777215 };   // yellow cyan magenta orange lime white (BGR)
     double cx = gw / 2, cy = gh / 2, m = 30;
-    for (int i = 0; i < O.nrcv; i++) {
-        if (!O.rcv[i]) continue;
-        double rx = rb_get_builtin_real(O.rcv[i], SLOT_X), ry = rb_get_builtin_real(O.rcv[i], SLOT_Y);
+    for (int i = 0; i < nwho; i++) {
+        if (!who[i]) continue;
+        double rx = rb_get_builtin_real(who[i], SLOT_X), ry = rb_get_builtin_real(who[i], SLOT_Y);
         if (rx < -9000) continue;
         double gx = (rx - vx) * gw / vw, gy = (ry - vy) * gh / vh;
         if (gx > m && gx < gw - m && gy > m && gy < gh - m) continue;    // on screen: no icon needed
@@ -900,7 +1011,7 @@ void rb_off_report(char *buf, size_t n) {
 }
 
 // The match objects are being destroyed (every play is rebuilt from scratch): drop every pointer.
-void rb_off_forget(void) { O.ball = 0; O.qb = O.rb = 0; O.nol = O.ndf = O.nrcv = 0; O.t_snap = 0; O.prot = 0; }
+void rb_off_forget(void) { script_play_reset(); O.ball = 0; O.qb = O.rb = 0; O.nol = O.ndf = O.nrcv = 0; O.t_snap = 0; O.prot = 0; }
 // The other team is running its offense: your back is fresh again for your next drive.
 void rb_off_cpu_drive(void) {
     if (g_legs < 1.0) { rb_log("offtools: other team has the ball - back fresh for your next drive (was %.0f%%)", g_legs * 100); g_legs = 1.0; }

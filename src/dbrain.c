@@ -363,6 +363,7 @@ static void decide_read(void) {
 // in the ball's path the interception; here that only happens on the throws decide_read() gave to the
 // defense. On the rest the defender tips it (the game's own tipped-pass routine) or just misses.
 // Returns 1 when the game's check must be skipped for this player this frame.
+int rb_dbrain_landing(double *x, double *y) { if (P.kind != 1 || P.zone < 0) return 0; *x = P.lx; *y = P.ly; return 1; }
 void rb_dbrain_forget(void) { P.ball = 0; P.rcv = 0; P.jumper = 0; P.kind = 0; }
 
 int rb_dbrain_ball_contact(CInstance *player, CInstance *other) {
