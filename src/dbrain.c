@@ -32,6 +32,7 @@ static struct {
     double lx, ly, bx0, by0, down, togo; int zone, scored, pend; unsigned t, t_throw;
     CInstance *rcv;                 // intended receiver (offense player nearest the landing spot)
     int tip, tipped, whiff_logged;      // not an undercut: the defender in the way bats it down (or misses it)
+    double fdx, fdy, range;             // the throw: unit direction and predicted total range
     double quick;                       // 1 = thrown on time, 0 = held (or after a scramble)
     int play; double jdir; unsigned t_catch;    // this throw: PLAY_*; the going defender's heading; when it was caught
     int contest_done, broken;           // contested catch: rolled once per throw; knocked away
@@ -173,6 +174,31 @@ static int near_cb(CInstance *inst, void *ctx) {
     if (d < c->bd) { c->bd = d; c->best = inst; }
     return 0;
 }
+// The man a pass is going to: an eligible offensive player (not the QB, not a lineman) ahead of the
+// throw, closest to the ball's line of flight, with a lean toward the predicted range.
+typedef struct { double ox, oy, dx, dy, range, bs; CInstance *best; double perp, along; } TargetCtx;
+static int target_cb(CInstance *inst, void *ctx) {
+    TargetCtx *c = ctx;
+    if (rb_off_not_a_target(inst)) return 0;
+    double rx = rb_get_builtin_real(inst, SLOT_X) - c->ox, ry = rb_get_builtin_real(inst, SLOT_Y) - c->oy;
+    double along = rx * c->dx + ry * c->dy, perp = fabs(rx * c->dy - ry * c->dx);
+    if (along < 15) return 0;                                           // behind the throw
+    double score = perp + 0.3 * fabs(along - c->range);
+    if (score < c->bs) { c->bs = score; c->best = inst; c->perp = perp; c->along = along; }
+    return 0;
+}
+// (re)pick the target; receivers run onto the ball's line as it flies, so this is redone every frame
+static void pick_target(CInstance *ball, CInstance *other, int log) {
+    TargetCtx c = { P.bx0, P.by0, P.fdx, P.fdy, P.range, 1e9, 0, 0, 0 };
+    RValue r = rb_obj_ref(OBJ_PLAYER_OF);
+    rb_with(&r, ball, other, target_cb, &c);
+    CInstance *was = P.rcv;
+    P.rcv = c.bs < 140 ? c.best : 0;
+    if (P.rcv) { P.lx = P.bx0 + P.fdx * c.along; P.ly = P.by0 + P.fdy * c.along; }      // it comes down where he is
+    if (log || P.rcv != was)
+        rb_log("dbrain: target %s - %.0f px off the ball's line, %.0f px along it (predicted range %.0f)",
+               !P.rcv ? "none" : was && P.rcv != was ? "changed" : "found", c.perp, c.along, P.range);
+}
 static int mean_cb(CInstance *inst, void *ctx) { MeanCtx *m = ctx; m->sx += rb_get_builtin_real(inst, SLOT_X); m->n++; return 0; }
 
 void rb_dlearn_step(CInstance *ball, CInstance *other, int human_offense) {
@@ -217,15 +243,17 @@ void rb_dlearn_step(CInstance *ball, CInstance *other, int human_offense) {
             P.lx = bx + mx / moved * R; P.ly = by + my / moved * R;
             double depth = (P.lx - P.los) * P.fwd / PX_PER_YD, side = (P.ly - P.qby) * (P.fwd > 0 ? 1 : -1);
             P.zone = (depth < 8 ? 0 : depth < 18 ? 1 : 2) * 3 + (side < -60 ? 0 : side > 60 ? 2 : 1);
-            NearCtx c = { P.lx, P.ly, 1e9, 0 };
-            RValue r = rb_obj_ref(OBJ_PLAYER_OF);
-            rb_with(&r, ball, other, near_cb, &c);
-            P.rcv = c.bd < 120 ? c.best : 0;
+            // Who it is going to: the eligible man closest to the ball's LINE of flight, not whoever
+            // stands nearest the predicted landing point. When the range came up short on a throw out
+            // wide, the nearest player to that point was the QB himself - and the defender covering the
+            // wide receiver turned and ran at the quarterback.
+            P.fdx = mx / moved; P.fdy = my / moved; P.range = moved + R;
             P.pend = 0;
-            rb_log("dbrain: throw lands ~%.0f yds deep, %s -> zone %d, receiver %s", depth,
-                   side < -60 ? "left" : side > 60 ? "right" : "middle", P.zone, P.rcv ? "found" : "none");
+            rb_log("dbrain: throw lands ~%.0f yds deep, %s -> zone %d", depth,
+                   side < -60 ? "left" : side > 60 ? "right" : "middle", P.zone);
+            pick_target(ball, other, 1);
         }
-    }
+    } else if (st == 3 && P.kind == 1 && P.zone >= 0) pick_target(ball, other, 0);
     if (st == P.prev_st || !P.fwd) return;
     double bx = rb_get_builtin_real(ball, SLOT_X), by = rb_get_builtin_real(ball, SLOT_Y);
     if (P.prev_st == 2 && st == 3) {                            // thrown: predict where it lands

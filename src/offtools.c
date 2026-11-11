@@ -553,4 +553,11 @@ void rb_off_cpu_drive(void) {
 double rb_off_los(void) { return O.ball && O.fwd ? O.los : -1e9; }
 // seconds since the snap on your pass play (-1 when there is none)
 double rb_off_snap_seconds(void) { return O.ball && O.t_snap ? (O.t - O.t_snap) / 60.0 : -1; }
+// the QB or an interior lineman: never the man a pass is going to
+int rb_off_not_a_target(CInstance *inst) {
+    if (!O.ball) return 0;
+    if (inst == O.qb) return 1;
+    for (int k = 0; k < O.nol; k++) if (O.ol[k] == inst) return 1;
+    return 0;
+}
 int rb_off_scrambled(void) { return O.ball && O.scrambled; }

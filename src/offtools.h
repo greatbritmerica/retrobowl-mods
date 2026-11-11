@@ -7,5 +7,6 @@ int  rb_off_blocker_ignores_ball(CInstance *player);                      // the
 void rb_off_cpu_drive(void);                                              // the CPU has the ball (resets the back's legs)
 double rb_off_los(void);                                                  // real line of scrimmage (x) this play, or < -1e8
 double rb_off_snap_seconds(void);                                         // seconds since the snap on your pass play, or -1
+int  rb_off_not_a_target(CInstance *inst);                                // the QB or an interior lineman
 void rb_off_forget(void);                                                 // match objects destroyed: drop pointers
 int  rb_off_scrambled(void);                                              // the player's QB scrambled and pulled up this play
