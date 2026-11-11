@@ -42,4 +42,7 @@ const TuneDef RB_TUNE[T_COUNT] = {
     { "cpu_off_boost", 1.35, 1.0, 2.0 },
     { "push_hold", 0.45, 0.1, 1.0 },
     { "push_frames", 90.0, 20.0, 240.0 },
+    { "hail_frames", 120.0, 40.0, 300.0 },
+    { "hail_depth", 5.0, 1.0, 9.0 },
+    { "hail_defenders", 1.0, 0.0, 4.0 },
 };

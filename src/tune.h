@@ -43,6 +43,9 @@ typedef enum {
     T_CPU_OFF_BOOST,
     T_PUSH_HOLD,
     T_PUSH_FRAMES,
+    T_HAIL_FRAMES,
+    T_HAIL_DEPTH,
+    T_HAIL_DEFENDERS,
     T_COUNT
 } TuneId;
 

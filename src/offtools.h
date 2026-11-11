@@ -10,5 +10,6 @@ double rb_off_snap_seconds(void);                                         // sec
 int  rb_off_not_a_target(CInstance *inst);                                // the QB or an interior lineman
 void rb_off_report(char *buf, size_t n);                                  // this play's offense fields for the report
 void rb_off_apply_penalty(void);                                          // a rule's penalty, as the play is torn down
+void rb_off_gui(CInstance *self);                                         // draw on the GUI layer (Hail Mary receiver icons)
 void rb_off_forget(void);                                                 // match objects destroyed: drop pointers
 int  rb_off_scrambled(void);                                              // the player's QB scrambled and pulled up this play

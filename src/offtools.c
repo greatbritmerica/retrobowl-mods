@@ -57,7 +57,7 @@ static struct {
     char note[96];
     CInstance *df[16]; double dfx[16]; int ndf, rusher[16];
     CInstance *ol[8]; double ol_d[8], front, rb_d; int nol;                                    // interior linemen (protection calls)
-    int fingers; int rules_fired, nhot, push_frames; int sneak, kneel, sneak_hold; unsigned sneak_t, t_run; double push; int legs_done; double slide_read; int prot, prot_frames, prot_noted;                            // this play's protection, how long it held someone up
+    int fingers; int rules_fired, nhot, push_frames; int hail, hail_set, hail_over, nhdf; CInstance *hdf[10]; double hail_goal, hail_tx, hail_lo, hail_hi, hdf_y[10]; int sneak, kneel, sneak_hold; unsigned sneak_t, t_run; double push; int legs_done; double slide_read; int prot, prot_frames, prot_noted;                            // this play's protection, how long it held someone up
 } O;
 
 // Protection call. It stays as set from play to play (shown on the button) until changed.
@@ -107,6 +107,10 @@ static struct { int valid; double down, togo, scrim, poss; } g_pre;      // wher
 static struct { int pending, replay; double yards; } g_pen;             // a penalty a rule called on it
 static void sneak_step(CInstance *ball, CInstance *other, double st);
 static int push_player(CInstance *player, double x, double y);
+static int hail_player(CInstance *p, double x, double y, unsigned since);
+static void hail_throw(CInstance *ball);
+#define FIELD_TOP_Y 141.0       // sidelines (y)
+#define FIELD_BOT_Y 458.0
 static CInstance *g_other;        // "other" for instance loops started from a rule
 // what rule conditions can see about your offense right now
 static void fill_ctx(void) {
@@ -449,6 +453,10 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
     }
     if (O.pa_live && O.t - O.t_snap >= PA_FRAMES) O.pa_live = 0;
     if (st == 3 || st == 5 || st == 19) O.pa_live = 0;              // ball's out or someone has it
+    if (O.hail && O.prev_st == 2 && st == 3) hail_throw(ball);
+    if (O.hail && !O.hail_over && O.t_snap && (st == 5 || st == 4 || st == 6 || st == 7 || st == 8 || st == 9 || st == 11)) {
+        if (!(st == 5 && O.prev_st != 3)) { O.hail_over = 1; rb_log("offtools: Hail Mary over (ball state %.0f)", st); }
+    }
     if (O.prot && !O.prot_noted && (st == 3 || st == 5 || st == 11)) { // how the protection did, for the next huddle
         O.prot_noted = 1;
         int held = O.prot_frames > 8;
@@ -584,6 +592,7 @@ void rb_off_after_ai(CInstance *player) {
     double x = rb_get_builtin_real(player, SLOT_X), y = rb_get_builtin_real(player, SLOT_Y);
     if (x < -9000) return;
     unsigned since = O.t - O.t_snap;
+    if (O.hail && !O.hail_over && hail_player(player, x, y, since)) return;
     if (O.push > 0 && since < (unsigned)T(T_PUSH_FRAMES) && (O.st == 1 || O.st == 2 || O.st == 5) && push_player(player, x, y)) return;
     if (O.pa_live && player == O.rb && since < 22) {                  // the fake handoff: across the QB
         steer(player, x, y, O.qbx + O.fwd * 25, O.qby, 1.0);
@@ -636,6 +645,129 @@ static int push_player(CInstance *player, double x, double y) {
     return 0;
 }
 
+// ---- the Hail Mary. Everyone who matters races to the end zone - your receivers and as many deep
+// defenders - faster than anyone can really run, arriving together a set time after the snap. Then they
+// stay in the end zone, and the throw carries there in whatever direction you aim. It ends as a jump
+// ball, decided by the usual pick / breakup / catch logic (the Hail Mary rules turn those up).
+static void hail_setup(void) {
+    double scrim = rb_get_obj_real(OBJ_CONTROLLER, SLOT_SCRIMMAGE), goal = 50 - scrim;
+    O.hail_goal = O.los + O.fwd * goal * PX_PER_YD;
+    O.hail_tx = O.hail_goal + O.fwd * T(T_HAIL_DEPTH) * PX_PER_YD;
+    O.hail_lo = O.hail_goal + O.fwd * 0.8 * PX_PER_YD;                  // inside the end zone
+    O.hail_hi = O.hail_goal + O.fwd * 9.2 * PX_PER_YD;
+    // the deepest defenders go back with them, each to a receiver's lane
+    int want = O.nrcv + (int)T(T_HAIL_DEFENDERS), used[16] = {0};
+    O.nhdf = 0;
+    for (int n = 0; n < want && O.nhdf < 10; n++) {
+        int best = -1; double bd = -1e9;
+        for (int i = 0; i < O.ndf; i++) {
+            if (used[i]) continue;
+            double d = (rb_get_builtin_real(O.df[i], SLOT_X) - O.los) * O.fwd;
+            if (d > bd) { bd = d; best = i; }
+        }
+        if (best < 0) break;
+        used[best] = 1;
+        O.hdf[O.nhdf] = O.df[best];
+        double ry = O.nrcv ? rb_get_builtin_real(O.rcv[n % O.nrcv], SLOT_Y) : O.qby;
+        O.hdf_y[O.nhdf] = ry + (n < O.nrcv ? 16 : -16);
+        O.nhdf++;
+    }
+    O.hail_set = 1;
+    rb_log("offtools: Hail Mary - goal line %.0f px away (%.0f yds), %d receivers and %d defenders racing back",
+           (O.hail_goal - O.los) * O.fwd, goal, O.nrcv, O.nhdf);
+}
+static int hail_player(CInstance *p, double x, double y, unsigned since) {
+    if (!O.hail_set) hail_setup();
+    double ty = -1;
+    for (int i = 0; i < O.nrcv; i++) if (O.rcv[i] == p) ty = y;
+    for (int i = 0; i < O.nhdf && ty < 0; i++) if (O.hdf[i] == p) ty = O.hdf_y[i];
+    if (ty < 0) return 0;
+    if (ty < FIELD_TOP_Y + 30) ty = FIELD_TOP_Y + 30;
+    if (ty > FIELD_BOT_Y - 30) ty = FIELD_BOT_Y - 30;
+    double left = (O.hail_tx - x) * O.fwd;
+    if (left > 3) {                                                     // racing back: carried there on time
+        double budget = T(T_HAIL_FRAMES), frames = budget > since + 1 ? budget - since : 1;
+        double step = left / frames;
+        if (step < 3) step = 3;
+        if (step > left) step = left;
+        rb_set_builtin_real(p, SLOT_X, x + O.fwd * step);
+        rb_set_builtin_real(p, SLOT_Y, y + (ty - y) * (step / (left + 1)));
+        steer(p, x, y, O.hail_tx, ty, 1.0);
+        return 1;
+    }
+    // there: free to move for the ball, but they stay in the end zone
+    double lo = O.fwd > 0 ? O.hail_lo : O.hail_hi, hi = O.fwd > 0 ? O.hail_hi : O.hail_lo;
+    if (x < lo) rb_set_builtin_real(p, SLOT_X, lo);
+    if (x > hi) rb_set_builtin_real(p, SLOT_X, hi);
+    return 0;
+}
+// the throw: whatever the drag, it carries to the end zone along the line you aimed
+static void hail_throw(CInstance *ball) {
+    if (!O.hail_set) return;
+    double qx = rb_get_builtin_real(ball, SLOT_X), qy = rb_get_builtin_real(ball, SLOT_Y);
+    double dir = rb_get_inst_real(ball, SLOT_DIREC) / 57.29577951308232;
+    double dx = cos(dir), dy = sin(dir);
+    if (dx * O.fwd < 0.25) { rb_log("offtools: Hail Mary throw not aimed downfield - left as thrown"); return; }
+    double D = (O.hail_tx - qx) / dx;
+    double ly = qy + dy * D;
+    if (ly < FIELD_TOP_Y + 20 && dy < 0) D = (FIELD_TOP_Y + 20 - qy) / dy;
+    if (ly > FIELD_BOT_Y - 20 && dy > 0) D = (FIELD_BOT_Y - 20 - qy) / dy;
+    if (D < 60) return;
+    double lo = 1, hi = 80;                                             // speed that carries exactly D
+    for (int k = 0; k < 50; k++) {
+        double v = (lo + hi) / 2, R = v * (1.0 - pow(DRAG_DECAY, AIR_K * v)) / (1.0 - DRAG_DECAY);
+        if (R < D) lo = v; else hi = v;
+    }
+    double v = (lo + hi) / 2, was = rb_get_inst_real(ball, SLOT_VELOCITY);
+    rb_set_inst_real(ball, SLOT_VELOCITY, v);
+    rb_set_inst_real(ball, SLOT_ZVEL, 0.35 * v);
+    rb_log("offtools: Hail Mary throw carries %.0f px (%.0f yds) - speed %.2f -> %.2f", D, D / PX_PER_YD, was, v);
+}
+// edge icons: where each receiver is, while you aim and while the ball is up
+static void *g_fn[8];
+static double gcall(int i, const char *name, CInstance *self, int argc, double a, double b, double c, double d, double e, double f, double g) {
+    if (!g_fn[i]) g_fn[i] = rb_builtin(name);
+    if (!g_fn[i]) return 0;
+    double av[7] = { a, b, c, d, e, f, g };
+    return rb_call(g_fn[i], self, argc, av);
+}
+void rb_off_gui(CInstance *self) {
+    if (!O.hail || O.hail_over || !O.t_snap || !O.hail_set) return;
+    double cam = gcall(0, "view_get_camera", self, 1, 0, 0, 0, 0, 0, 0, 0);
+    double vx = gcall(1, "camera_get_view_x", self, 1, cam, 0, 0, 0, 0, 0, 0), vy = gcall(2, "camera_get_view_y", self, 1, cam, 0, 0, 0, 0, 0, 0);
+    double vw = gcall(3, "camera_get_view_width", self, 1, cam, 0, 0, 0, 0, 0, 0), vh = gcall(4, "camera_get_view_height", self, 1, cam, 0, 0, 0, 0, 0, 0);
+    double gw = gcall(5, "display_get_gui_width", self, 0, 0, 0, 0, 0, 0, 0, 0), gh = gcall(6, "display_get_gui_height", self, 0, 0, 0, 0, 0, 0, 0, 0);
+    if (!(vw > 1 && vh > 1 && gw > 1 && gh > 1)) return;
+    static const double COL[6] = { 65535, 16776960, 16711935, 4235519, 65280, 16777215 };   // yellow cyan magenta orange lime white (BGR)
+    double cx = gw / 2, cy = gh / 2, m = 30;
+    for (int i = 0; i < O.nrcv; i++) {
+        if (!O.rcv[i]) continue;
+        double rx = rb_get_builtin_real(O.rcv[i], SLOT_X), ry = rb_get_builtin_real(O.rcv[i], SLOT_Y);
+        if (rx < -9000) continue;
+        double gx = (rx - vx) * gw / vw, gy = (ry - vy) * gh / vh;
+        if (gx > m && gx < gw - m && gy > m && gy < gh - m) continue;    // on screen: no icon needed
+        double ux = gx - cx, uy = gy - cy, s = 1e9;
+        if (fabs(ux) > 1e-6) { double q = (cx - m) / fabs(ux); if (q < s) s = q; }
+        if (fabs(uy) > 1e-6) { double q = (cy - m) / fabs(uy); if (q < s) s = q; }
+        double ix = cx + ux * s, iy = cy + uy * s, ul = hypot(ux, uy), nx = ux / ul, ny = uy / ul;
+        gcall(7, "draw_set_alpha", self, 1, 0.92, 0, 0, 0, 0, 0, 0);
+        if (!g_fn[7]) return;
+        static void *f_col, *f_circ, *f_tri;
+        if (!f_col) { f_col = rb_builtin("draw_set_colour"); f_circ = rb_builtin("draw_circle"); f_tri = rb_builtin("draw_triangle"); }
+        if (!f_col || !f_circ || !f_tri) return;
+        double a1[1] = { 0 }, c1[4] = { ix, iy, 17, 0 }, c2[4] = { ix, iy, 13, 0 };
+        rb_call(f_col, self, 1, a1); rb_call(f_circ, self, 4, c1);                  // dark ring
+        double tip[7] = { ix + nx * 27, iy + ny * 27, ix + nx * 13 - ny * 9, iy + ny * 13 + nx * 9, ix + nx * 13 + ny * 9, iy + ny * 13 - nx * 9, 0 };
+        rb_call(f_tri, self, 7, tip);                                               // pointer toward him
+        double a2[1] = { COL[i % 6] };
+        rb_call(f_col, self, 1, a2); rb_call(f_circ, self, 4, c2);                  // his colour
+    }
+    double w[1] = { 16777215 }, one[1] = { 1 };
+    if (g_fn[7]) { rb_call(g_fn[7], self, 1, one); }
+    static void *f_col2; if (!f_col2) f_col2 = rb_builtin("draw_set_colour");
+    if (f_col2) rb_call(f_col2, self, 1, w);
+}
+
 // ---- the sneak and the kneel: the mod starts the play for you with the same gesture you would make
 // (finger down, pull back to aim, then "throw it backwards" - which is how the QB takes off), then
 // hands the controls straight back. A kneel then puts the ball down with the game's own routine.
@@ -677,6 +809,13 @@ void rb_rules_do_play(const char *what, double v) {
     if (!O.ball || !O.fwd) return;
     if (!strcmp(what, "push")) { O.push = v > 0 ? v / 100 : 1.0; rb_log("offtools: rule - push at %.0f%%", O.push * 100); return; }
     if (O.t_snap || O.st != 0) { rb_log("offtools: rule '%s' only works before the snap", what); return; }
+    if (!strcmp(what, "hailmary")) {
+        for (int i = 0; i < O.nrcv; i++) if (O.rcv[i]) apply_route(O.rcv[i], "route_streak", "Streak", "everyone");
+        O.hail = 1;
+        snprintf(O.note, sizeof O.note, "HAIL MARY: everyone to the end zone");
+        rb_log("offtools: rule - Hail Mary set for this play");
+        return;
+    }
     if (!strcmp(what, "deep")) {
         for (int i = 0; i < O.nrcv; i++) if (O.rcv[i]) apply_route(O.rcv[i], "route_streak", "Streak", "everyone");
         snprintf(O.note, sizeof O.note, "Everyone goes deep");

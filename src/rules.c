@@ -19,6 +19,7 @@
 //     then legs <+|=> <percent>            the back's stamina
 //     then speed <group> <percent>         this play: qb back receivers line rushers coverage defense
 //     then sneak | kneel | deep            (before the snap) QB keeps it and runs / takes a knee / every route goes long
+//     then hailmary                        (before the snap) receivers race to the end zone, the throw carries there
 //     then push <percent>                  line and back drive forward, defenders in the pile are held
 //     then penalty <yards> <replay|next>   after the play: move the ball (+ is in your favor), replay the down or not
 //     end
@@ -237,7 +238,7 @@ int rb_rules_parse(const char *buf) {
                 char grp[16];
                 if (sscanf(line, "%*s %*s %15s %lf", grp, &v) != 2) { bad++; continue; }
                 snprintf(x->a, sizeof x->a, "%s", grp); x->v = v;
-            } else if (!strcmp(a, "sneak") || !strcmp(a, "kneel") || !strcmp(a, "deep")) {
+            } else if (!strcmp(a, "sneak") || !strcmp(a, "kneel") || !strcmp(a, "deep") || !strcmp(a, "hailmary")) {
             } else if (!strcmp(a, "push")) {
                 if (sscanf(line, "%*s %*s %lf", &v) != 1) v = 100;
                 x->v = v;
@@ -302,7 +303,7 @@ static void run(const Rule *r) {
         else if (!strcmp(x->type, "var")) { double *v = var_slot(x->a, 1); if (v) *v = x->op == '+' ? *v + x->v : x->v; }
         else if (!strcmp(x->type, "legs")) rb_rules_do_legs(x->op, x->v);
         else if (!strcmp(x->type, "speed")) rb_rules_do_speed(x->a, x->v);
-        else if (!strcmp(x->type, "sneak") || !strcmp(x->type, "kneel") || !strcmp(x->type, "deep") || !strcmp(x->type, "push")) rb_rules_do_play(x->type, x->v);
+        else if (!strcmp(x->type, "sneak") || !strcmp(x->type, "kneel") || !strcmp(x->type, "deep") || !strcmp(x->type, "push") || !strcmp(x->type, "hailmary")) rb_rules_do_play(x->type, x->v);
         else if (!strcmp(x->type, "penalty")) rb_rules_do_penalty(x->v, x->keep);
         else if (!strcmp(x->type, "msg")) {
             // said before the snap: this play's panel. Said later (a result, a flag): the next play's.

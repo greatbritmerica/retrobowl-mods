@@ -16,13 +16,14 @@
           acts: [{ t: 'button', text: 'Kneel' }] },
         { name: 'Kneel', ev: 'button', arg: 'Kneel', conds: [], acts: [{ t: 'kneel' }] }
       ] },
-    { title: 'Hail Mary', about: 'In the last 10 seconds of either half, a Hail Mary button sends every receiver deep. The ball is up for grabs: more picks, but the defender misses more too.',
+    { title: 'Hail Mary', about: 'In the last 10 seconds of either half, a Hail Mary button. Your receivers and their deep defenders race to the end zone from anywhere on the field, and your throw carries there in the direction you aim. Icons at the screen edge show where your receivers are. It ends as a jump ball.',
       rules: [
         { name: 'Offer it before halftime', ev: 'presnap', conds: [{ v: 'quarter', op: '=', val: 2 }, { v: 'clock', op: '<=', val: 10 }], acts: [{ t: 'button', text: 'Hail Mary' }] },
         { name: 'Offer it at the end', ev: 'presnap', conds: [{ v: 'quarter', op: '>=', val: 4 }, { v: 'clock', op: '<=', val: 10 }], acts: [{ t: 'button', text: 'Hail Mary' }] },
         { name: 'Hail Mary', ev: 'button', arg: 'Hail Mary', conds: [],
-          acts: [{ t: 'deep' }, { t: 'tune', key: 'pick_base', op: '+', val: 10, keep: false }, { t: 'tune', key: 'whiff_tight', op: '+', val: 15, keep: false },
-                 { t: 'tune', key: 'contest_reach', op: '=', val: 40, keep: false }] }
+          acts: [{ t: 'hailmary' }, { t: 'speed', group: 'rushers', val: 80 }, { t: 'tune', key: 'pick_base', op: '+', val: 8, keep: false },
+                 { t: 'tune', key: 'whiff_tight', op: '+', val: 10, keep: false }, { t: 'tune', key: 'contest_reach', op: '=', val: 40, keep: false },
+                 { t: 'msg', text: 'Hail Mary: aim at an icon and let it fly' }] }
       ] },
     { title: 'Flags', about: 'Three fouls, each a small random chance: holding on your offense, offside on the defense, and pass interference on a deep incompletion.',
       rules: [

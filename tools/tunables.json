@@ -444,5 +444,35 @@
   "max": 240,
   "step": 5,
   "help": "At 60 frames a second."
+ },
+ {
+  "group": "Hail Mary",
+  "key": "hail_frames",
+  "label": "Receivers reach the end zone after (frames)",
+  "def": 120,
+  "min": 40,
+  "max": 300,
+  "step": 5,
+  "help": "How long after the snap your receivers and the deep defenders arrive in the end zone, at 60 frames a second."
+ },
+ {
+  "group": "Hail Mary",
+  "key": "hail_depth",
+  "label": "How deep in the end zone they set up (yards)",
+  "def": 5,
+  "min": 1,
+  "max": 9,
+  "step": 1,
+  "help": "Also where the ball comes down."
+ },
+ {
+  "group": "Hail Mary",
+  "key": "hail_defenders",
+  "label": "Extra defenders sent back",
+  "def": 1,
+  "min": 0,
+  "max": 4,
+  "step": 1,
+  "help": "Deep defenders who race back with them: one per receiver plus this many."
  }
 ]
