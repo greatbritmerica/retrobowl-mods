@@ -263,6 +263,8 @@ static double dir_to(double fx, double fy, double tx, double ty) {
 #define SLOT_HEIGHT     0x100fa5c18ULL     // ball: height off the ground
 #define VA_S_DROP_BALL  0x100395780ULL     // gml_Script_s_drop_ball(false), run as the player: the game's own tipped pass
 
+#define FIELD_TOP        141.0   // the sidelines (y), from where balls have gone out of bounds in the logs
+#define FIELD_BOT        458.0
 #define WHIFF_FRAMES     20      // after a miss the defender overruns the catch this long (1/3 s)
 #define CONTEST_REACH    28.0    // defender this close to the receiver at the catch: contested
 
@@ -398,18 +400,34 @@ void rb_dlearn_after_ai(CInstance *player) {
                     if (P.play == PLAY_WHIFF) {                         // the miss: he flashes across in front of the
                         double px = -fy / fl * 20, py = fx / fl * 20;   // receiver, a body-width off, and sails by
                         if (hypot(tx + px - x, ty + py - y) > hypot(tx - px - x, ty - py - y)) { px = -px; py = -py; }
+                        // by the sideline the miss goes to the field side, never out of bounds
+                        if (ty + py < FIELD_TOP + 14 || ty + py > FIELD_BOT - 14) { px = -px; py = -py; }
                         tx += px; ty += py;
                     }
                 }
-                if (hypot(tx - x, ty - y) > 6) P.jdir = dir_to(x, y, tx, ty);   // (keep his heading once he's on the spot)
-                rb_set_inst_real(player, SLOT_JDIR, P.jdir);
-                rb_set_inst_real(player, SLOT_JFORCE, 1.0);
+                // Toward a sideline the spot could land out of bounds, and he chased it there.
+                if (ty < FIELD_TOP + 8) ty = FIELD_TOP + 8;
+                if (ty > FIELD_BOT - 8) ty = FIELD_BOT - 8;
+                // On a longer throw he gets to the spot before the ball does. He used to keep driving at
+                // full speed with his heading frozen, ran through it, turned back, ran through it again.
+                // Now he settles there, squared up to the ball, until it arrives.
+                if (hypot(tx - x, ty - y) > 10) {
+                    P.jdir = dir_to(x, y, tx, ty);
+                    rb_set_inst_real(player, SLOT_JDIR, P.jdir);
+                    rb_set_inst_real(player, SLOT_JFORCE, 1.0);
+                } else {
+                    double bx = rb_get_builtin_real(P.ball, SLOT_X), by = rb_get_builtin_real(P.ball, SLOT_Y);
+                    rb_set_inst_real(player, SLOT_JDIR, dir_to(x, y, bx, by));
+                    rb_set_inst_real(player, SLOT_JFORCE, 0.12);
+                }
             }
         }
     } else if (st == 5 && P.kind == 1 && P.play == PLAY_WHIFF && player == P.jumper && P.t - P.t_catch < WHIFF_FRAMES) {
         // he went for the ball and missed: his momentum carries him past the receiver for a moment
+        // (but not over the sideline: there he just pulls up)
+        int edge = y < FIELD_TOP + 14 || y > FIELD_BOT - 14;
         rb_set_inst_real(player, SLOT_JDIR, P.jdir);
-        rb_set_inst_real(player, SLOT_JFORCE, 1.0);
+        rb_set_inst_real(player, SLOT_JFORCE, edge ? 0.0 : 1.0);
     } else if (st == 5 && P.kind == 2) {                                // run: only if the player lives off it
         double a = run_alert() * (0.4 + 0.8 * rb_dbrain_run_dial());
         if (a <= 0) return;
