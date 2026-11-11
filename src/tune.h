@@ -41,6 +41,8 @@ typedef enum {
     T_DIAL_MIN,
     T_CPU_DEF_BOOST,
     T_CPU_OFF_BOOST,
+    T_PUSH_HOLD,
+    T_PUSH_FRAMES,
     T_COUNT
 } TuneId;
 

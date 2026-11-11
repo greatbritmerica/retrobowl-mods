@@ -18,6 +18,9 @@
 //     then button <label>                  (in a presnap rule: adds a button; pressing it fires "button <label>")
 //     then legs <+|=> <percent>            the back's stamina
 //     then speed <group> <percent>         this play: qb back receivers line rushers coverage defense
+//     then sneak | kneel | deep            (before the snap) QB keeps it and runs / takes a knee / every route goes long
+//     then push <percent>                  line and back drive forward, defenders in the pile are held
+//     then penalty <yards> <replay|next>   after the play: move the ball (+ is in your favor), replay the down or not
 //     end
 #include "rb.h"
 #include "sys.h"
@@ -122,7 +125,8 @@ static unsigned g_rule_hash = 1;
 static struct { char name[32]; double v; } g_vars[MAXV];
 static int g_nvars;
 static char g_btn[MAXB][32]; static int g_nbtn; static char g_btn_pressed[MAXB];
-static char g_msg[200];
+static char g_msg[200], g_carry[200], g_both[404];
+static int g_firing_presnap;
 RuleCtx rb_rctx;
 
 static double *var_slot(const char *name, int create) {
@@ -157,6 +161,10 @@ static double value_of(const char *name, int *ok) {
     if (!strcmp(name, "play_action")) return c->play_action;
     if (!strcmp(name, "protection")) return c->protection;
     if (!strcmp(name, "scrambled")) return c->scrambled;
+    if (!strcmp(name, "quarter")) return c->quarter;
+    if (!strcmp(name, "clock")) return c->clock;
+    if (!strcmp(name, "score_diff")) return c->score_diff;
+    if (!strcmp(name, "goal")) return c->goal;
     if (!strcmp(name, "chance")) return arc4random_uniform(10000) / 100.0;
     if (!strncmp(name, "var.", 4)) { double *v = var_slot(name + 4, 0); return v ? *v : 0; }
     if (!strncmp(name, "pressed.", 8)) {
@@ -229,6 +237,14 @@ int rb_rules_parse(const char *buf) {
                 char grp[16];
                 if (sscanf(line, "%*s %*s %15s %lf", grp, &v) != 2) { bad++; continue; }
                 snprintf(x->a, sizeof x->a, "%s", grp); x->v = v;
+            } else if (!strcmp(a, "sneak") || !strcmp(a, "kneel") || !strcmp(a, "deep")) {
+            } else if (!strcmp(a, "push")) {
+                if (sscanf(line, "%*s %*s %lf", &v) != 1) v = 100;
+                x->v = v;
+            } else if (!strcmp(a, "penalty")) {
+                char how[12] = "next";
+                if (sscanf(line, "%*s %*s %lf %11s", &v, how) < 1) { bad++; continue; }
+                x->v = v; x->keep = !strcmp(how, "replay");
             } else if (!strcmp(a, "msg") || !strcmp(a, "button")) {
                 snprintf(x->text, sizeof x->text, "%s", after_words(line, 2));
                 if (!x->text[0]) { bad++; continue; }
@@ -255,13 +271,17 @@ void rb_rules_load(void) {
 
 // a new play: forget this play's buttons, presses and messages
 void rb_rules_new_play(void) { g_nbtn = 0; memset(g_btn_pressed, 0, sizeof g_btn_pressed); g_msg[0] = 0; }
+void rb_rules_snapped(void) { g_carry[0] = 0; }           // the carried-over messages have been seen
 int rb_rules_buttons(const char **labels, int max) {
     int n = 0;
     for (; n < g_nbtn && n < max; n++) labels[n] = g_btn[n];
     return n;
 }
 int rb_rules_button_pressed(int i) { return i >= 0 && i < g_nbtn ? g_btn_pressed[i] : 0; }
-const char *rb_rules_msg(void) { return g_msg; }
+const char *rb_rules_msg(void) {
+    snprintf(g_both, sizeof g_both, "%s%s%s", g_carry, g_carry[0] && g_msg[0] ? "\n" : "", g_msg);
+    return g_both;
+}
 
 static int holds(const Cond *q) {
     int ok; double v = value_of(q->var, &ok);
@@ -282,9 +302,13 @@ static void run(const Rule *r) {
         else if (!strcmp(x->type, "var")) { double *v = var_slot(x->a, 1); if (v) *v = x->op == '+' ? *v + x->v : x->v; }
         else if (!strcmp(x->type, "legs")) rb_rules_do_legs(x->op, x->v);
         else if (!strcmp(x->type, "speed")) rb_rules_do_speed(x->a, x->v);
+        else if (!strcmp(x->type, "sneak") || !strcmp(x->type, "kneel") || !strcmp(x->type, "deep") || !strcmp(x->type, "push")) rb_rules_do_play(x->type, x->v);
+        else if (!strcmp(x->type, "penalty")) rb_rules_do_penalty(x->v, x->keep);
         else if (!strcmp(x->type, "msg")) {
-            int n = (int)strlen(g_msg);
-            snprintf(g_msg + n, sizeof g_msg - (size_t)n, "%s%s", n ? "\n" : "", x->text);
+            // said before the snap: this play's panel. Said later (a result, a flag): the next play's.
+            char *buf = g_firing_presnap ? g_msg : g_carry;
+            int n = (int)strlen(buf);
+            snprintf(buf + n, sizeof g_msg - (size_t)n, "%s%s", n ? "\n" : "", x->text);
         } else if (!strcmp(x->type, "button")) {
             int have = 0;
             for (int k = 0; k < g_nbtn; k++) if (!strcmp(g_btn[k], x->text)) have = 1;
@@ -294,6 +318,7 @@ static void run(const Rule *r) {
 }
 int rb_rules_fire(const char *ev, const char *arg) {
     int fired = 0;
+    g_firing_presnap = !strcmp(ev, "presnap") || !strcmp(ev, "button");
     for (int i = 0; i < g_nrules; i++) {
         const Rule *r = &g_rules[i];
         if (strcmp(r->ev, ev)) continue;

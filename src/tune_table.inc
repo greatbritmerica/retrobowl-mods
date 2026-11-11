@@ -40,4 +40,6 @@ const TuneDef RB_TUNE[T_COUNT] = {
     { "dial_min", 0.25, 0.1, 0.8 },
     { "cpu_def_boost", 0.5, 0.0, 1.0 },
     { "cpu_off_boost", 1.35, 1.0, 2.0 },
+    { "push_hold", 0.45, 0.1, 1.0 },
+    { "push_frames", 90.0, 20.0, 240.0 },
 };

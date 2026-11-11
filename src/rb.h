@@ -56,6 +56,9 @@ enum { OBJ_BTN_FIELDGOAL = 16, OBJ_BALL = 3, OBJ_CONTROLLER = 44, OBJ_MASTER = 8
 #define SLOT_YTOUCH          0x100fb0788ULL
 #define SLOT_MY_THROW_POWER  0x100fa6d98ULL
 #define SLOT_DOWN            0x100fa4b48ULL
+#define SLOT_QUARTER         0x100fa78e8ULL   // obj_controller.quarter
+#define SLOT_MINUTES         0x100fa6b68ULL   // obj_controller.minutes / .seconds: the game clock
+#define SLOT_SECONDS         0x100faed28ULL
 #define SLOT_SCRIMMAGE       0x100faece8ULL
 #define SLOT_KICKING         0x100fa6308ULL
 #define SLOT_YARDS           0x100fb06e8ULL

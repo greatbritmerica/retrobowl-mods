@@ -57,7 +57,7 @@ static struct {
     char note[96];
     CInstance *df[16]; double dfx[16]; int ndf, rusher[16];
     CInstance *ol[8]; double ol_d[8], front, rb_d; int nol;                                    // interior linemen (protection calls)
-    int fingers; int rules_fired, nhot; int legs_done; double slide_read; int prot, prot_frames, prot_noted;                            // this play's protection, how long it held someone up
+    int fingers; int rules_fired, nhot, push_frames; int sneak, kneel, sneak_hold; unsigned sneak_t, t_run; double push; int legs_done; double slide_read; int prot, prot_frames, prot_noted;                            // this play's protection, how long it held someone up
 } O;
 
 // Protection call. It stays as set from play to play (shown on the button) until changed.
@@ -103,6 +103,10 @@ static void cb_route(int i)   { g_ev_route = i ? i : -1; }
 static void cb_pump(int i)    { g_ev_pump = i ? 1 : -1; }
 
 #define RULE_BTNS 3
+static struct { int valid; double down, togo, scrim, poss; } g_pre;      // where the play in progress started
+static struct { int pending, replay; double yards; } g_pen;             // a penalty a rule called on it
+static void sneak_step(CInstance *ball, CInstance *other, double st);
+static int push_player(CInstance *player, double x, double y);
 static CInstance *g_other;        // "other" for instance loops started from a rule
 // what rule conditions can see about your offense right now
 static void fill_ctx(void) {
@@ -116,6 +120,12 @@ static void fill_ctx(void) {
     rb_rctx.protection = g_prot;
     rb_rctx.scrambled = O.scrambled;
     rb_rctx.is_run = O.run_play;
+    rb_rctx.quarter = rb_get_obj_real(OBJ_CONTROLLER, SLOT_QUARTER);
+    rb_rctx.clock = rb_get_obj_real(OBJ_CONTROLLER, SLOT_MINUTES) * 60 + rb_get_obj_real(OBJ_CONTROLLER, SLOT_SECONDS);
+    int us = -1, them = -1;
+    rb_score(&us, &them);
+    rb_rctx.score_diff = us >= 0 && them >= 0 ? us - them : 0;
+    rb_rctx.goal = 50 - rb_get_obj_real(OBJ_CONTROLLER, SLOT_SCRIMMAGE);     // the game's own conversion
 }
 static void show_presnap(void) {
     const char *b[3 + RULE_BTNS] = { O.pa_on ? "Play action: ON" : "Play action: off", "Hot route", PROT_BTN[g_prot] };
@@ -259,6 +269,13 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
         g_ev_presnap = g_ev_rcv = g_ev_route = g_ev_pump = 0;
     }
     O.prev_st = O.st; O.st = st;
+    if (O.sneak) {
+        sneak_step(ball, other, st);
+        if (st == 0 || st == 1) {                                 // the play is being started for you: no menu
+            if (O.presnap_shown) { rb_ui_panel_close(RB_PANEL_PRESNAP); O.presnap_shown = 0; }
+            return;
+        }
+    }
 
     if (O.prev_st == 5 && (st == 1 || st == 2) && !O.scrambled) { // QB ran (carrier) then pulled up to aim again
         rb_log("offtools: scramble pull-up (run -> aim) - no windup sack on this throw");
@@ -322,6 +339,12 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
             O.rules_fired = 1;
             rb_rctx.held = rb_rctx.depth = rb_rctx.yards = rb_rctx.worked = 0;
             fill_ctx();
+            // where this play starts, for a penalty that replays the down
+            g_pre.down = rb_rctx.down; g_pre.togo = rb_rctx.togo; g_pre.scrim = rb_get_obj_real(OBJ_CONTROLLER, SLOT_SCRIMMAGE);
+            g_pre.poss = rb_get_obj_real(OBJ_CONTROLLER, SLOT_POSSESSION); g_pre.valid = 1;
+            g_pen.pending = 0;
+            rb_log("offtools: situation - quarter %.0f, %.0f s left, down %.0f & %.1f, yard line %.1f (%.0f to the goal), score %+.0f",
+                   rb_rctx.quarter, rb_rctx.clock, rb_rctx.down, rb_rctx.togo, g_pre.scrim, rb_rctx.goal, rb_rctx.score_diff);
             rb_rules_fire("presnap", 0);
         }
         if (!O.presnap_shown) show_presnap();
@@ -367,6 +390,7 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
         for (int i = 0; i < O.ndf; i++) O.rusher[i] = fabs(O.dfx[i] - O.los) < RUSH_DEPTH;
         g_other = other;
         fill_ctx();
+        rb_rules_snapped();
         rb_rules_fire("snap", 0);                                 // your rules for "at the snap"
         if (!O.run_play) {
             double side = g_prot == PROT_UP ? -1 : g_prot == PROT_DOWN ? 1 : 0;
@@ -386,13 +410,13 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
             }
             g_slide_lean += (side - g_slide_lean) * 0.25;
         }
-        O.prot = O.run_play ? PROT_NORMAL : g_prot;
+        O.prot = O.run_play || O.sneak ? PROT_NORMAL : g_prot;
         g_last_prot[0] = 0;
         if (O.prot) {
             if (O.prot == PROT_MAX && !O.rb) O.prot = PROT_NORMAL;      // empty backfield: nobody to keep in
             rb_log("offtools: protection %s - %d linemen%s", PROT_NAME[O.prot], O.nol, O.prot == PROT_MAX ? ", back stays in" : "");
         }
-        if (O.pa_on && !O.run_play) {
+        if (O.pa_on && !O.run_play && !O.sneak) {
             double rs = rb_dbrain_run_share(), f = (rs - 0.15) / (T(T_PA_FULL_RUNS) - 0.15 > 0.01 ? T(T_PA_FULL_RUNS) - 0.15 : 0.01);   // ~30% runs already sells it well
             if (f < 0) f = 0;
             if (f > 1) f = 1;
@@ -406,6 +430,7 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
     if (!O.legs_done && (st == 4 || st == 6 || st == 7 || st == 8 || st == 9 || st == 11)) {   // play over: the back's legs
         O.legs_done = 1;
         if (st == 11) { fill_ctx(); rb_rules_fire("sack", 0); }
+        if (O.push > 0) rb_log("offtools: push at %.0f%% - defenders in the pile were held for %d frames", O.push * 100, O.push_frames);
         double before = g_legs;
         if (O.run_play) {
             double yds = (rb_get_builtin_real(ball, SLOT_X) - O.los) * O.fwd / PX_PER_YD;
@@ -438,7 +463,7 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
     }
 
     // pump fake while aiming
-    if (st == 2 && O.pumps < MAX_PUMPS) {
+    if (st == 2 && O.pumps < MAX_PUMPS && !O.sneak) {
         if (!O.pump_shown) {
             static const char *b[1] = { "PUMP" };
             rb_ui_panel(RB_PANEL_PUMP, RB_SIDE_LEFT_BOTTOM, 124, "", "", b, 1, cb_pump);
@@ -559,6 +584,7 @@ void rb_off_after_ai(CInstance *player) {
     double x = rb_get_builtin_real(player, SLOT_X), y = rb_get_builtin_real(player, SLOT_Y);
     if (x < -9000) return;
     unsigned since = O.t - O.t_snap;
+    if (O.push > 0 && since < (unsigned)T(T_PUSH_FRAMES) && (O.st == 1 || O.st == 2 || O.st == 5) && push_player(player, x, y)) return;
     if (O.pa_live && player == O.rb && since < 22) {                  // the fake handoff: across the QB
         steer(player, x, y, O.qbx + O.fwd * 25, O.qby, 1.0);
         return;
@@ -583,6 +609,113 @@ int rb_off_blocker_ignores_ball(CInstance *player) {
                      rb_get_builtin_real(O.ball, SLOT_Y) - rb_get_builtin_real(O.qb, SLOT_Y));
     return d < 70;
 }
+// ---- the push (short yardage): the line fires straight ahead, the back gets in behind the QB and
+// shoves, and any defender in contact with the pile drives at part strength. Real bodies, as with the
+// protection calls. Returns 1 when this player was steered.
+static int push_player(CInstance *player, double x, double y) {
+    double qx = rb_get_builtin_real(O.qb, SLOT_X), qy = rb_get_builtin_real(O.qb, SLOT_Y);
+    if (qx < -9000) return 0;
+    if (player == O.qb) return 0;
+    if (player == O.rb) { steer(player, x, y, qx - O.fwd * 10, qy, 1.0); return 1; }
+    for (int k = 0; k < O.nol; k++)
+        if (O.ol[k] == player) { steer(player, x, y, x + O.fwd * 40, y + (qy - y) * 0.3, 1.0); return 1; }
+    for (int i = 0; i < O.ndf; i++) {
+        if (O.df[i] != player) continue;
+        int in_pile = hypot(qx - x, qy - y) < BLOCK_REACH + 4 ||
+                      (O.rb && hypot(rb_get_builtin_real(O.rb, SLOT_X) - x, rb_get_builtin_real(O.rb, SLOT_Y) - y) < BLOCK_REACH + 4);
+        for (int k = 0; k < O.nol && !in_pile; k++)
+            in_pile = hypot(rb_get_builtin_real(O.ol[k], SLOT_X) - x, rb_get_builtin_real(O.ol[k], SLOT_Y) - y) < BLOCK_REACH + 4;
+        if (in_pile) {
+            double hold = 1.0 - (1.0 - T(T_PUSH_HOLD)) * (O.push > 1.5 ? 1.5 : O.push);
+            if (hold < 0.1) hold = 0.1;
+            if (rb_get_inst_real(player, SLOT_JFORCE) > hold) rb_set_inst_real(player, SLOT_JFORCE, hold);
+            O.push_frames++;
+        }
+        return 0;                                                       // (his own path, just slower)
+    }
+    return 0;
+}
+
+// ---- the sneak and the kneel: the mod starts the play for you with the same gesture you would make
+// (finger down, pull back to aim, then "throw it backwards" - which is how the QB takes off), then
+// hands the controls straight back. A kneel then puts the ball down with the game's own routine.
+#define SN_P0X 400.0
+#define SN_P0Y 190.0
+#define VA_S_SET_BALL_DOWN 0x1005015d4ULL    // gml_Script_s_set_ball_down(), run as the ball
+static void sneak_step(CInstance *ball, CInstance *other, double st) {
+    unsigned dt = O.t - O.sneak_t;
+    if (O.sneak == 1) {
+        if (st == 2) { O.sneak = 2; O.sneak_hold = 0; }
+        else if (dt > 60 || (st != 0 && st != 1)) {
+            rb_vf.down = 0; rb_vf.active = 0; O.sneak = 0; O.kneel = 0;
+            rb_log("offtools: sneak could not start the play (ball state %.0f) - controls are yours", st);
+            return;
+        }
+        rb_vf.active = 1;
+        rb_vf.room_x = O.qbx - O.fwd * 120; rb_vf.room_y = O.qby;       // an empty spot behind the QB, not on a player
+        rb_vf.down = 1; rb_vf.gui_x = dt < 2 ? SN_P0X : SN_P0X - O.fwd * 30; rb_vf.gui_y = SN_P0Y;
+    }
+    if (O.sneak == 2) {
+        if (st != 2 || O.sneak_hold > 45) {
+            rb_vf.down = 0; rb_vf.active = 0; O.sneak = 3; O.t_run = O.t;
+            rb_log("offtools: sneak - %s", st == 5 ? "the QB has it and is running" : "the QB did not take off (controls are yours)");
+            if (st != 5) O.kneel = 0;
+            return;
+        }
+        rb_vf.active = 1;
+        rb_vf.room_x = O.qbx - O.fwd * 120; rb_vf.room_y = O.qby;
+        rb_vf.down = ++O.sneak_hold < 10; rb_vf.gui_x = SN_P0X + O.fwd * 45; rb_vf.gui_y = SN_P0Y;
+    }
+    if (O.sneak == 3 && O.kneel == 1 && st == 5 && O.t - O.t_run >= 8) {
+        O.kneel = 2;
+        RValue res = {0}; res.kind = RV_UNDEFINED;
+        ((GMLScript)RB(VA_S_SET_BALL_DOWN))(ball, other, &res, 0, 0);
+        rb_log("offtools: kneel - ball put down");
+    }
+}
+void rb_rules_do_play(const char *what, double v) {
+    if (!O.ball || !O.fwd) return;
+    if (!strcmp(what, "push")) { O.push = v > 0 ? v / 100 : 1.0; rb_log("offtools: rule - push at %.0f%%", O.push * 100); return; }
+    if (O.t_snap || O.st != 0) { rb_log("offtools: rule '%s' only works before the snap", what); return; }
+    if (!strcmp(what, "deep")) {
+        for (int i = 0; i < O.nrcv; i++) if (O.rcv[i]) apply_route(O.rcv[i], "route_streak", "Streak", "everyone");
+        snprintf(O.note, sizeof O.note, "Everyone goes deep");
+        return;
+    }
+    if (O.sneak) return;
+    O.sneak = 1; O.sneak_t = O.t; O.kneel = !strcmp(what, "kneel");
+    rb_log("offtools: rule - %s: starting the play", what);
+}
+
+// ---- penalties. A rule calls one after a play; it is applied when the game tears the play down, to the
+// game's own down, distance and yard line (-50 is your goal line, +50 theirs).
+void rb_rules_do_penalty(double yards, int replay) {
+    if (!g_pre.valid) return;
+    g_pen.pending = 1; g_pen.yards = yards; g_pen.replay = replay;
+    rb_log("offtools: rule - penalty of %+.0f yards called (%s)", yards, replay ? "replay the down" : "added to the play");
+}
+void rb_off_apply_penalty(void) {
+    if (!g_pen.pending) return;
+    g_pen.pending = 0;
+    double poss = rb_get_obj_real(OBJ_CONTROLLER, SLOT_POSSESSION);
+    double down = rb_get_obj_real(OBJ_CONTROLLER, SLOT_DOWN), togo = rb_get_obj_real(OBJ_CONTROLLER, SLOT_YARDS);
+    double scrim = rb_get_obj_real(OBJ_CONTROLLER, SLOT_SCRIMMAGE);
+    if (poss != g_pre.poss || O.st == 6 || O.st == 9) {                 // a score or a change of possession stands
+        rb_log("offtools: penalty dropped - the ball changed hands or you scored (state %.0f)", O.st);
+        return;
+    }
+    double from = g_pen.replay ? g_pre.scrim : scrim, base_togo = g_pen.replay ? g_pre.togo : togo;
+    double to = from + g_pen.yards;
+    if (to > 49) to = 49;                                               // never past a goal line
+    if (to < -49) to = -49;
+    double moved = to - from, ntogo = base_togo - moved, ndown = g_pen.replay ? g_pre.down : down;
+    if (ntogo <= 0) { ndown = 1; ntogo = 50 - to < 10 ? 50 - to : 10; }  // enough for a first down
+    rb_set_obj_real(OBJ_CONTROLLER, SLOT_SCRIMMAGE, to);
+    rb_set_obj_real(OBJ_CONTROLLER, SLOT_YARDS, ntogo);
+    rb_set_obj_real(OBJ_CONTROLLER, SLOT_DOWN, ndown);
+    rb_log("offtools: penalty applied - yard line %.1f -> %.1f, down %.0f & %.1f -> down %.0f & %.1f", scrim, to, down, togo, ndown, ntogo);
+}
+
 // ---- what a rule can do to your players
 void rb_rules_do_legs(char op, double pct) {
     double before = g_legs;

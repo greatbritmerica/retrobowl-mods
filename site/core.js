@@ -32,6 +32,10 @@
     { id: 'play_action', label: 'Play action is on', kind: 'yesno' },
     { id: 'scrambled', label: 'You scrambled', kind: 'yesno', from: 'snap' },
     { id: 'protection', label: 'Protection call', kind: 'choice', choices: [[0, 'Normal'], [1, 'Max protect'], [2, 'Slide up'], [3, 'Slide down']] },
+    { id: 'quarter', label: 'Quarter', kind: 'num', unit: '', hint: '1 to 4' },
+    { id: 'clock', label: 'Seconds left in the quarter', kind: 'num', unit: 's' },
+    { id: 'score_diff', label: 'Your lead', kind: 'num', unit: 'pts', hint: 'negative when you trail' },
+    { id: 'goal', label: 'Yards to the end zone', kind: 'num', unit: 'yds' },
     { id: 'chance', label: 'Random chance', kind: 'num', unit: '%', hint: '"less than 30" is true 30% of the time' },
     { id: 'var', label: 'A counter', kind: 'counter' },
     { id: 'pressed', label: 'A button is on', kind: 'pressed' }
@@ -40,6 +44,11 @@
   var GROUPS = [['qb', 'Your quarterback'], ['back', 'Your back'], ['receivers', 'Your receivers'], ['line', 'Your line'],
                 ['rushers', 'Their pass rushers'], ['coverage', 'Their coverage'], ['defense', 'Their whole defense']];
   var ACTIONS = [
+    { id: 'sneak', label: 'QB sneak: snap it, he keeps it', when: 'pre' },
+    { id: 'push', label: 'Push: line and back drive the pile', when: 'start' },
+    { id: 'kneel', label: 'Kneel: snap it and take a knee', when: 'pre' },
+    { id: 'deep', label: 'Send every receiver deep', when: 'pre' },
+    { id: 'penalty', label: 'Call a penalty', when: 'after' },
     { id: 'tune', label: 'Change a setting' },
     { id: 'speed', label: 'Speed a group up or down' },
     { id: 'legs', label: "Change the back's legs" },
@@ -47,6 +56,7 @@
     { id: 'msg', label: 'Show a message before the snap' },
     { id: 'var', label: 'Change a counter' }
   ];
+  var AFTER = ['catch', 'incomplete', 'intercepted', 'sack', 'touchdown', 'play_end'];
   var LIMITS = { rules: 64, conds: 6, acts: 8, buttons: 3, name: 39, label: 31, msg: 71, counter: 24 };
 
   function ident(s) { return String(s || '').replace(/[^A-Za-z0-9_]/g, '_').slice(0, LIMITS.counter); }
@@ -93,6 +103,9 @@
       if (t && t.pct && a.op !== '*') v = v / 100;          // percent settings are typed as percents, stored as fractions
       return 'then tune ' + a.key + ' ' + a.op + ' ' + num(v) + ' ' + (a.keep ? 'keep' : 'play');
     }
+    if (a.t === 'sneak' || a.t === 'kneel' || a.t === 'deep') return 'then ' + a.t;
+    if (a.t === 'push') return 'then push ' + num(a.val);
+    if (a.t === 'penalty') return 'then penalty ' + num(a.val) + ' ' + (a.replay ? 'replay' : 'next');
     if (a.t === 'speed') return 'then speed ' + a.group + ' ' + num(a.val);
     if (a.t === 'legs') return 'then legs ' + a.op + ' ' + num(a.val);
     if (a.t === 'button') return 'then button ' + oneLine(a.text, LIMITS.label);
@@ -133,6 +146,12 @@
       if (a.t === 'button' && r.ev !== 'presnap') p.push('Buttons can only be added by a "Before the snap" rule.');
       if (a.t === 'var' && !ident(a.name)) p.push('A counter needs a name.');
       if (a.t === 'speed' && !(Number(a.val) > 0)) p.push('Speed must be above 0%.');
+      var pre = r.ev === 'presnap' || r.ev === 'button', after = AFTER.indexOf(r.ev) >= 0;
+      if ((a.t === 'sneak' || a.t === 'kneel' || a.t === 'deep') && !pre) p.push('"' + a.t + '" only works before the snap: use it in a "Before the snap" or button rule.');
+      if (a.t === 'push' && !(pre || r.ev === 'snap')) p.push('A push has to start before or at the snap.');
+      if (a.t === 'push' && !(Number(a.val) > 0)) p.push('Push strength must be above 0%.');
+      if (a.t === 'penalty' && !after) p.push('A penalty is called after a play: use it in a rule for how the play ended.');
+      if (a.t === 'penalty' && !Number(a.val)) p.push('A penalty needs a number of yards.');
     });
     return p;
   }

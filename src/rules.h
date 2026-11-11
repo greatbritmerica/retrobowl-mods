@@ -15,6 +15,9 @@ typedef struct {
     double play_action;         // 1 when play action is on
     double protection;          // 0 normal, 1 max, 2 slide up, 3 slide down
     double scrambled;           // 1 after a scramble
+    double quarter, clock;      // quarter 1-4 (5+ overtime); seconds left in it
+    double score_diff;          // your score minus theirs
+    double goal;                // yards to the end zone you are attacking
 } RuleCtx;
 extern RuleCtx rb_rctx;
 
@@ -22,6 +25,7 @@ void rb_rules_load(void);                              // re-read rbmod_rules.tx
 int  rb_rules_parse(const char *buf);                  // (load's parser; returns unusable lines)
 int  rb_rules_count(void);
 void rb_rules_new_play(void);
+void rb_rules_snapped(void);                           // the play has started (clears messages carried from the last one)
 int  rb_rules_fire(const char *ev, const char *arg);   // returns how many rules fired
 int  rb_rules_buttons(const char **labels, int max);   // buttons rules asked for this play
 int  rb_rules_button_pressed(int i);
@@ -31,5 +35,7 @@ const char *rb_rules_msg(void);                        // text rules want shown 
 // effects a rule can cause; implemented by the module that owns the players
 void rb_rules_do_legs(char op, double pct);
 void rb_rules_do_speed(const char *group, double pct);
+void rb_rules_do_play(const char *what, double v);     // "sneak" "kneel" "deep" "push" (v: push strength %)
+void rb_rules_do_penalty(double yards, int replay);    // + moves you forward; replay the down or keep the result
 
 void rb_report_line(const char *fmt, ...);             // append one line to rbmod_plays.txt

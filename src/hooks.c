@@ -118,6 +118,7 @@ RValue *hook_slog(CInstance *self, CInstance *other, RValue *res, int argc, RVal
         g_match_live = 0;
         g_play_ball = 0;
         g_ret.who = 0; g_ret.nof = 0;
+        rb_off_apply_penalty();
         rb_off_forget(); rb_dbrain_forget();
     }
     return ORIG(slog)(self, other, res, argc, argv);
