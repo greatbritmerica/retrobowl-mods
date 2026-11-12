@@ -17,10 +17,11 @@ Claude can't run the game, so every change is tested by the user on the phone.
   only swaps that file inside the user's injected v89 IPA; the game binary doesn't change.
 
 ## Script loop
-1. Edit `examples/step1_script.txt`. The PostToolUse hook runs `tools/check_script.js` (the Workshop's
-   own checker plus the 48-block / 64-variable limits, alone and combined with the Hail Mary).
+1. Edit `examples/step1_script.txt`. A PreToolUse hook blocks edits to generated files and a PostToolUse
+   hook reruns the generators after source edits (`tools/hooks.js`). Another PostToolUse hook runs
+   `tools/check_script.js` (the Workshop's own checker plus the 48-block / 64-variable limits, alone and combined with the Hail Mary).
    Node is at `C:/Program Files/nodejs/node.exe` (not on the bash PATH).
-2. Commit, push (branch `step1-scripts`), then `bash tools/deploy_script.sh` puts the combined file in
+2. Run the `mod-pitfall-reviewer` agent on the change, then commit, push (branch `step1-scripts`), then `bash tools/deploy_script.sh` puts the combined file in
    iCloud Drive -> "Retro Bowl mods"; the user moves it into the RetroBowl folder in Files.
 3. The user plays, copies `rbmod.log` to the same iCloud folder and says so: run `/playtest`.
 
