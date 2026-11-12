@@ -22,8 +22,7 @@ on presnap
   meter_per_catch = 20        # meter gained per completion (100 = full)
   meter_per_miss = 10         # meter lost per incompletion or interception
   super_needs = 100           # meter needed for a super throw
-  super_slow_defenders = 1    # 1 = the 2 defenders nearest the catch are slowed
-  super_def_speed = 70        # their speed during a super throw, in percent
+  super_clear_defenders = 1   # 1 = the 2 defenders nearest the catch are pushed away from it
   if meter == nil
     meter = 0
   end
@@ -61,9 +60,13 @@ end
 
 on snap
   if super_on and pressed("Super throw")
-    super_slowed = 0
+    # no pick, no breakup, the defender always reads it late, lowest possible tip
     tune("pick_base", 0)
     tune("pick_known", 0)
+    tune("breakup_share", 0)
+    tune("whiff_tight", 1)
+    tune("whiff_loose", 1)
+    tune("tip_height", 15)
     log("s1: super throw")
   end
 end
@@ -73,12 +76,11 @@ on frame
     for r in nearest(receivers(), landing_x(), landing_y(), 1)
       steer(r, landing_x(), landing_y(), 1)
     end
-    # speed() stacks each time it's called, so slow them once per throw
-    if super_slow_defenders and not super_slowed
+    # the defenders nearest the catch are pushed away from it while the ball is in the air
+    if super_clear_defenders
       for d in nearest(defenders(), landing_x(), landing_y(), 2)
-        speed(d, super_def_speed)
+        steer(d, d.x + (d.x - landing_x()) * 2, d.y + (d.y - landing_y()) * 2, 1)
       end
-      super_slowed = 1
     end
   end
 end
@@ -91,17 +93,18 @@ end
 
 # ============================================================
 # 2. SCREEN PASS
-# A "Screen" button. At the snap the back drifts out to one side behind the
-# line, and the linemen nearest him release to set up just in front of him.
+# Call one of the game's own plays where the back slips out, then tap "Screen".
+# The back runs the play as normal. After a short pass-block, the linemen
+# nearest him let their man go and run out ahead of him to block.
 # ============================================================
 
 on presnap
   # --- Screen pass: change these ---
   screen_on = 1          # 1 = on, 0 = off
-  screen_side = 0        # 1 = top side, -1 = bottom side, 0 = the side with more room
-  screen_depth = 5       # how many yards toward the sideline the back drifts
+  screen_delay = 0.8     # seconds the line pass-blocks before releasing
+  screen_lead = 3        # how many yards in front of the back the blockers aim for
   screen_linemen = 3     # how many linemen release to block
-  screen_time = 3        # seconds after the snap the blockers keep heading out
+  screen_time = 4        # seconds after the snap the blockers keep leading him
   if screen_on
     button("Screen")
   end
@@ -110,38 +113,18 @@ end
 on snap
   scr_ready = 0
   if screen_on and pressed("Screen") and back() != nil
-    scr_dy = 1
-    if screen_side == 1
-      scr_dy = -1
-    elif screen_side == 0 and back().y - field_top() > field_bottom() - back().y
-      scr_dy = -1
-    end
-    scr_y = max(field_top() + 20, min(field_bottom() - 20, back().y + scr_dy * yard(screen_depth)))
-    # the back waits 2 yards behind the line; the blockers set up just past it, in front of him
-    scr_bx = los_x() - fwd() * yard(2)
-    scr_x = los_x() + fwd() * yard(1)
     scr_logged = 0
     scr_ready = 1
-    log("s1: screen side", scr_dy, "spot", scr_x, scr_y)
-  end
-end
-
-# Kept apart: route() fails if the back is already on that route, and that
-# only switches off this block.
-on snap
-  if scr_ready
-    route(back(), "route_flat")
+    log("s1: screen")
   end
 end
 
 on frame
-  if scr_ready and back() != nil and since_snap() < screen_time
-    # the game's flat route can head either way, so steer the back to the blockers' side
-    if not thrown()
-      steer(back(), scr_bx, scr_y, 1)
-    end
+  if scr_ready and back() != nil and since_snap() >= screen_delay and since_snap() < screen_time
+    # aim a few yards in front of wherever the back is now, spread across his path
+    tx = back().x + fwd() * yard(screen_lead)
     n = 0
-    for p in nearest(offense(), los_x(), back().y, screen_linemen + 3)
+    for p in nearest(offense(), back().x, back().y, screen_linemen + 4)
       ok = 1
       if p == qb() or p == back()
         ok = 0
@@ -152,7 +135,7 @@ on frame
         end
       end
       if ok and n < screen_linemen
-        steer(p, scr_x, scr_y, 1)
+        steer(p, tx, back().y + (n - 1) * yard(1.5), 1)
         n = n + 1
         if not scr_logged
           log("s1: screen blocker", p.x, p.y)
@@ -165,14 +148,15 @@ end
 
 # ============================================================
 # 3. STOP-AND-GO
-# Receivers start on a slant, then break straight downfield.
-# (The game's own slant-and-go route crashes the game, so this steers them.)
+# Receivers make a sharp fake cut toward the middle, then break straight downfield.
+# (The game's own slant-and-go route crashes the game, so the whole move is steered.)
 # ============================================================
 
 on presnap
   # --- Stop and go: change these ---
   sng_on = 1            # 1 = on, 0 = off
-  sng_fake_time = 0.9   # seconds of slant before they break downfield
+  sng_fake_time = 0.6   # seconds of the fake cut before they break downfield
+  sng_fake_sharp = 1    # how sharp the fake cut is: 1 = 45 degrees, 2 = steeper, 0.5 = shallower
   if sng_on
     button("Stop and go")
   end
@@ -184,24 +168,21 @@ on snap
   end
 end
 
-# Kept apart: route() fails if a receiver is already on a slant, and that
-# only switches off this block; the break downfield below still happens.
-on snap
-  if sng_on and pressed("Stop and go")
+on frame
+  if sng_on and pressed("Stop and go") and not thrown()
+    mid = (field_top() + field_bottom()) / 2
     for r in receivers()
       # with Screen also on, leave the back to the screen
       if not (scr_ready and r == back())
-        route(r, "route_slant")
-      end
-    end
-  end
-end
-
-on frame
-  if sng_on and pressed("Stop and go") and since_snap() >= sng_fake_time and not thrown()
-    for r in receivers()
-      if not (scr_ready and r == back())
-        steer(r, r.x + fwd() * yard(10), r.y, 1)
+        if since_snap() < sng_fake_time
+          dy = 1
+          if r.y > mid
+            dy = -1
+          end
+          steer(r, r.x + fwd() * yard(3), r.y + dy * yard(3) * sng_fake_sharp, 1)
+        else
+          steer(r, r.x + fwd() * yard(10), r.y, 1)
+        end
       end
     end
   end
