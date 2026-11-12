@@ -190,10 +190,10 @@ end
 
 # ============================================================
 # 4. LIGHT INJURIES
-# After a tackle or sack, there's a small chance the player who went down is
+# After a tackle or sack, there's a small chance your QB or running back is
 # hobbled: slower for the rest of the game. A message says so before the snap.
-# The "injured id" lines in the log tell us which game value recognizes the
-# same player on later plays; until that's confirmed, the slowdown may not stick.
+# shortcut: only the QB and the back - the game has no value that tells other
+# players apart between plays; receivers and linemen need the step 2 build.
 # ============================================================
 
 on presnap
@@ -204,13 +204,15 @@ on presnap
   injury_sacks = 1     # 1 = sacks can injure the QB, 0 = they can't
   no_tackle = 0
   if last_q != nil and quarter() < last_q
-    hurt_id = nil
     hurt_qb = 0
-    log("s1: new game, injuries cleared")
+    hurt_back = 0
+    if injury_on
+      log("s1: new game, injuries cleared")
+    end
   end
   last_q = quarter()
   if injury_on and hurt_new
-    msg("Injury! A player is hobbled for the rest of the game")
+    msg("Injury! Your " + hurt_who + " is hobbled for the rest of the game")
   end
   hurt_new = 0
 end
@@ -223,68 +225,36 @@ on touchdown
   no_tackle = 1
 end
 
+on intercepted
+  no_tackle = 1
+end
+
 # "on play_end" doesn't run after a sack, so the QB gets his own roll here.
-# He's always qb(), so no id is needed to find him again.
 on sack
   if injury_on and injury_sacks and chance(injury_chance)
     hurt_qb = 1
     hurt_new = 1
+    hurt_who = "QB"
     log("s1: QB injured on a sack")
   end
 end
 
+# A tackle: if the player brought down is the QB or the back, roll for an injury.
 on play_end
   if injury_on and not no_tackle
     near = nearest(offense(), ball().x, ball().y, 1)
     if count(near) > 0 and chance(injury_chance)
       p = item(near, 0)
-      hurt_x = p.x
-      hurt_y = p.y
-      hurt_new = 1
-      log("s1: injured at", p.x, p.y)
-    end
-  end
-end
-
-# One block per name, so a name the game doesn't have only switches off its own block.
-on play_end
-  if hurt_new
-    p = item(nearest(offense(), hurt_x, hurt_y, 1), 0)
-    hurt_id = get(p, "id")
-    log("s1: injured id id", hurt_id)
-  end
-end
-
-on play_end
-  if hurt_new
-    log("s1: injured id player_id", get(item(nearest(offense(), hurt_x, hurt_y, 1), 0), "player_id"))
-  end
-end
-
-on play_end
-  if hurt_new
-    log("s1: injured id uid", get(item(nearest(offense(), hurt_x, hurt_y, 1), 0), "uid"))
-  end
-end
-
-on play_end
-  if hurt_new
-    log("s1: injured id number", get(item(nearest(offense(), hurt_x, hurt_y, 1), 0), "number"))
-  end
-end
-
-on play_end
-  if hurt_new
-    log("s1: injured id slot", get(item(nearest(offense(), hurt_x, hurt_y, 1), 0), "slot"))
-  end
-end
-
-on snap
-  if injury_on and hurt_id != nil
-    for p in offense()
-      if get(p, "id") == hurt_id
-        speed(p, injury_speed)
-        log("s1: hobbled", hurt_id)
+      if p == qb()
+        hurt_qb = 1
+        hurt_new = 1
+        hurt_who = "QB"
+        log("s1: QB injured on a tackle")
+      elif p == back()
+        hurt_back = 1
+        hurt_new = 1
+        hurt_who = "running back"
+        log("s1: back injured on a tackle")
       end
     end
   end
@@ -294,6 +264,13 @@ on snap
   if injury_on and hurt_qb and qb() != nil
     speed(qb(), injury_speed)
     log("s1: hobbled QB")
+  end
+end
+
+on snap
+  if injury_on and hurt_back and back() != nil
+    speed(back(), injury_speed)
+    log("s1: hobbled back")
   end
 end
 
