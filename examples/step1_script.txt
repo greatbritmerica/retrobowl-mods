@@ -81,3 +81,62 @@ on play_end
     meter = 0
   end
 end
+
+# ============================================================
+# 2. SCREEN PASS
+# A "Screen" button. At the snap the back runs a flat route and the linemen
+# nearest him release toward the side to block for him.
+# ============================================================
+
+on presnap
+  # --- Screen pass: change these ---
+  screen_on = 1          # 1 = on, 0 = off
+  screen_side = 0        # 1 = top side, -1 = bottom side, 0 = the side with more room
+  screen_depth = 8       # how many yards toward the sideline the blockers set up, from where the back starts
+  screen_linemen = 3     # how many linemen release to block
+  screen_time = 3        # seconds after the snap the blockers keep heading out
+  if screen_on
+    button("Screen")
+  end
+end
+
+on snap
+  if screen_on and pressed("Screen")
+    scr_dy = 1
+    if screen_side == 1
+      scr_dy = -1
+    elif screen_side == 0 and back().y - field_top() > field_bottom() - back().y
+      scr_dy = -1
+    end
+    scr_y = max(field_top() + 20, min(field_bottom() - 20, back().y + scr_dy * yard(screen_depth)))
+    scr_x = los_x() + fwd() * yard(1)
+    scr_logged = 0
+    route(back(), "route_flat")
+    log("s1: screen side", scr_dy, "spot", scr_x, scr_y)
+  end
+end
+
+on frame
+  if screen_on and pressed("Screen") and since_snap() < screen_time
+    n = 0
+    for p in nearest(offense(), los_x(), back().y, screen_linemen + 3)
+      ok = 1
+      if p == qb() or p == back()
+        ok = 0
+      end
+      for r in receivers()
+        if p == r
+          ok = 0
+        end
+      end
+      if ok and n < screen_linemen
+        steer(p, scr_x, scr_y, 0.8)
+        n = n + 1
+        if not scr_logged
+          log("s1: screen blocker", p.x, p.y)
+        end
+      end
+    end
+    scr_logged = 1
+  end
+end
