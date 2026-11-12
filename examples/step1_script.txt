@@ -315,3 +315,59 @@ on snap
     log("s1: hobbled QB")
   end
 end
+
+# ============================================================
+# 5. TRACE
+# Records where every player and the ball are, about 6 times a second, so
+# Claude can draw the play as a picture from rbmod.log.
+# There's no Trace button (the game shows at most 3), so it switches itself on.
+# ============================================================
+
+on presnap
+  # --- Trace: change these ---
+  trace_mode = 1      # 0 = off, 1 = plays where you press Screen, Stop and go or Super throw, 2 = every play
+  trace_every = 10    # frames between snapshots (60 frames = 1 second)
+  tr_f = 0
+end
+
+on snap
+  tr_on = 0
+  if trace_mode == 2 or (trace_mode == 1 and (pressed("Screen") or pressed("Stop and go") or pressed("Super throw")))
+    tr_on = 1
+    log("s1: TS", los_x(), fwd(), field_top(), field_bottom(), down())
+  end
+end
+
+# One snapshot: the ball, then each player as  time, role, number, x, y.
+# Roles: 1 QB, 2 back, 3 receiver, 4 lineman, 5 defender.
+on frame
+  if tr_on
+    tr_f = tr_f + 1
+    if trace_every <= 1 or tr_f % trace_every == 1
+      t = since_snap()
+      log("s1: TB", t, ball().x, ball().y, state())
+      i = 0
+      for p in offense()
+        k = 4
+        if p == qb()
+          k = 1
+        elif p == back()
+          k = 2
+        else
+          for r in receivers()
+            if p == r
+              k = 3
+            end
+          end
+        end
+        log("s1: TP", t, k, i, p.x, p.y)
+        i = i + 1
+      end
+      i = 0
+      for p in defenders()
+        log("s1: TP", t, 5, i, p.x, p.y)
+        i = i + 1
+      end
+    end
+  end
+end

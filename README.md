@@ -17,3 +17,4 @@ Game files are not included in this repo.
 - `src/script.c`, `src/script_game.c`: the play-script engine for `rbmod_script.txt` (mod build v89+)
 - `docs/SCRIPTING.md`: the script language: every event, statement and function
 - `examples/`: the Hail Mary script and its button rules, ready to drop into the game's folder
+- `tools/trace_plot.py`: draws plays traced by the step 1 script (`s1: TS/TB/TP` lines in rbmod.log) as PNG pictures
