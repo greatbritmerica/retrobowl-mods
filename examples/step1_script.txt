@@ -140,3 +140,51 @@ on frame
     scr_logged = 1
   end
 end
+
+# ============================================================
+# 3. TRICK PLAYS: STOP-AND-GO, plus a test for later trick plays
+# "Stop and go" gives every receiver the game's own slant-and-go route.
+# The probe only writes to rbmod.log: it records how the game keeps track of
+# who has the ball, which decides whether hook-and-lateral and flea flicker
+# can be scripts. Turn it off with probe_on = 0 once the log has been sent.
+# ============================================================
+
+on presnap
+  # --- Trick plays: change these ---
+  sng_on = 1      # 1 = on, 0 = off
+  probe_on = 1    # 1 = log ball-holder info, 0 = off
+  last_state = -1
+  last_holder = -1
+  probe_logs = 0
+  if sng_on
+    button("Stop and go")
+  end
+end
+
+on snap
+  if sng_on and pressed("Stop and go")
+    for r in receivers()
+      route(r, "route_slant_fake")
+    end
+    log("s1: stop and go")
+  end
+end
+
+on frame
+  if probe_on and state() != last_state
+    log("s1: ball state", state(), since_snap())
+    last_state = state()
+  end
+end
+
+# Kept apart: if the holder isn't a readable number, only this block switches off.
+on frame
+  if probe_on and probe_logs < 40
+    h = ball().holder
+    if h != last_holder
+      log("s1: holder", h, since_snap())
+      last_holder = h
+      probe_logs = probe_logs + 1
+    end
+  end
+end
