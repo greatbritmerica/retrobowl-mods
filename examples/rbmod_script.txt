@@ -1,0 +1,44 @@
+# Hail Mary: when the Hail Mary button is on, your receivers and their deep
+# defenders are lined up in the end zone at the snap, and the throw carries
+# there in whatever direction you aim. It ends as a jump ball.
+# (Goes with the Hail Mary rules, which add the button.)
+
+on snap
+  if pressed("Hail Mary")
+    rec = receivers()
+    # receivers across the end zone, 2 yards deep, sideline to sideline
+    spread(rec, endzone_x(2), field_top() + 50, field_bottom() - 50)
+    # one deep defender on each receiver, plus one more
+    rec = sort_y(rec)
+    i = 0
+    for d in deepest(defenders(), count(rec) + 1)
+      r = item(rec, i % count(rec))
+      place(d, r.x + fwd() * yard(1), r.y + 18)
+      i = i + 1
+    end
+  end
+end
+
+on frame
+  if pressed("Hail Mary")
+    icons(receivers())
+    for r in receivers()
+      if thrown()
+        steer(r, landing_x(), landing_y())
+      else
+        steer(r, endzone_x(2), r.y, 0.3)
+      end
+    end
+    if thrown()
+      for d in nearest(defenders(), landing_x(), landing_y(), count(receivers()) + 1)
+        steer(d, landing_x(), landing_y())
+      end
+    end
+  end
+end
+
+on release
+  if pressed("Hail Mary")
+    carry(endzone_x(5), 5)
+  end
+end

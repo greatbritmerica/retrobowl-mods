@@ -10,3 +10,10 @@ Gameplay mod library for Retro Bowl 1.6.49 (iOS). The mods are C code compiled i
 - `make`: builds the dylib on macOS/Xcode; `make LINUX=1` builds with clang + ld64.lld
 
 Game files are not included in this repo.
+
+## Workshop and play scripts
+
+- `site/`: the Workshop page (Tune, Rules, Script, Report, Files); `python3 tools/build_site.py` builds `site/index.html`
+- `src/script.c`, `src/script_game.c`: the play-script engine for `rbmod_script.txt` (mod build v89+)
+- `docs/SCRIPTING.md`: the script language: every event, statement and function
+- `examples/`: the Hail Mary script and its button rules, ready to drop into the game's folder

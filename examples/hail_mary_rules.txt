@@ -1,0 +1,25 @@
+# Retro Bowl mod rules - made with the Workshop
+# Save as rbmod_rules.txt in the game's folder.
+
+rule Offer it before halftime
+when presnap
+if quarter = 2
+if clock <= 10
+then button Hail Mary
+end
+
+rule Offer it at the end
+when presnap
+if quarter >= 4
+if clock <= 10
+then button Hail Mary
+end
+
+rule Hail Mary
+when button Hail Mary
+then speed rushers 80
+then tune pick_base + 0.08 play
+then tune whiff_tight + 0.1 play
+then tune contest_reach = 40 play
+then msg Hail Mary: aim at the end zone and let it fly
+end
