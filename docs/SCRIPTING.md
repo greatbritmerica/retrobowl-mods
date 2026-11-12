@@ -44,6 +44,10 @@ end
 | `on touchdown` | When it happens. |
 | `on play_end` | After every run or pass play. |
 
+`on catch`, `on incomplete`, `on intercepted`, `on touchdown`, `on play_end` and `landing_x()`/`landing_y()`
+come from the Extreme defense code, so they only happen on Extreme difficulty. `on play_end` doesn't
+run after a sack. At most 3 pre-snap buttons show, and rules add theirs first.
+
 `on frame` gets a lower step budget than the others (see Limits). Rules (`rbmod_rules.txt`) for the
 same event run first, then the script.
 

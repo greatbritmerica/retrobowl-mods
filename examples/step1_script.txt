@@ -4,6 +4,10 @@
 # To tune a feature, change the numbers in its first "on presnap" block.
 # To turn a feature off, set its  ..._on  line to 0.
 # Everything this file does is logged in rbmod.log on lines starting with "s1:".
+# Play on EXTREME difficulty: the meter and injuries use events the mod only
+# sends on Extreme. The screen pass and stop-and-go work on any difficulty.
+# The game shows at most 3 buttons before a snap. When the Hail Mary button is
+# up (end of a half), one of these may not appear.
 
 # ============================================================
 # 1. SUPER BULLET THROW
@@ -57,6 +61,7 @@ end
 
 on snap
   if super_on and pressed("Super throw")
+    super_slowed = 0
     tune("pick_base", 0)
     tune("pick_known", 0)
     log("s1: super throw")
@@ -64,14 +69,16 @@ on snap
 end
 
 on frame
-  if super_on and pressed("Super throw") and thrown()
+  if super_on and pressed("Super throw") and thrown() and landing_x() != nil
     for r in nearest(receivers(), landing_x(), landing_y(), 1)
       steer(r, landing_x(), landing_y(), 1)
     end
-    if super_slow_defenders
+    # speed() stacks each time it's called, so slow them once per throw
+    if super_slow_defenders and not super_slowed
       for d in nearest(defenders(), landing_x(), landing_y(), 2)
         speed(d, super_def_speed)
       end
+      super_slowed = 1
     end
   end
 end
@@ -101,7 +108,8 @@ on presnap
 end
 
 on snap
-  if screen_on and pressed("Screen")
+  scr_ready = 0
+  if screen_on and pressed("Screen") and back() != nil
     scr_dy = 1
     if screen_side == 1
       scr_dy = -1
@@ -111,13 +119,21 @@ on snap
     scr_y = max(field_top() + 20, min(field_bottom() - 20, back().y + scr_dy * yard(screen_depth)))
     scr_x = los_x() + fwd() * yard(1)
     scr_logged = 0
-    route(back(), "route_flat")
+    scr_ready = 1
     log("s1: screen side", scr_dy, "spot", scr_x, scr_y)
   end
 end
 
+# Kept apart: route() fails if the back is already on that route, and that
+# only switches off this block.
+on snap
+  if scr_ready
+    route(back(), "route_flat")
+  end
+end
+
 on frame
-  if screen_on and pressed("Screen") and since_snap() < screen_time
+  if scr_ready and back() != nil and since_snap() < screen_time
     n = 0
     for p in nearest(offense(), los_x(), back().y, screen_linemen + 3)
       ok = 1
@@ -164,7 +180,10 @@ end
 on snap
   if sng_on and pressed("Stop and go")
     for r in receivers()
-      route(r, "route_slant_fake")
+      # with Screen also on, leave the back on his flat route
+      if not (scr_ready and r == back())
+        route(r, "route_slant_fake")
+      end
     end
     log("s1: stop and go")
   end
@@ -204,9 +223,9 @@ on presnap
   injury_speed = 85    # a hobbled player's speed, in percent
   injury_sacks = 1     # 1 = sacks can injure the QB, 0 = they can't
   no_tackle = 0
-  sacked = 0
   if last_q != nil and quarter() < last_q
     hurt_id = nil
+    hurt_qb = 0
     log("s1: new game, injuries cleared")
   end
   last_q = quarter()
@@ -224,12 +243,18 @@ on touchdown
   no_tackle = 1
 end
 
+# "on play_end" doesn't run after a sack, so the QB gets his own roll here.
+# He's always qb(), so no id is needed to find him again.
 on sack
-  sacked = 1
+  if injury_on and injury_sacks and chance(injury_chance)
+    hurt_qb = 1
+    hurt_new = 1
+    log("s1: QB injured on a sack")
+  end
 end
 
 on play_end
-  if injury_on and not no_tackle and (injury_sacks or not sacked)
+  if injury_on and not no_tackle
     near = nearest(offense(), ball().x, ball().y, 1)
     if count(near) > 0 and chance(injury_chance)
       p = item(near, 0)
@@ -282,5 +307,12 @@ on snap
         log("s1: hobbled", hurt_id)
       end
     end
+  end
+end
+
+on snap
+  if injury_on and hurt_qb and qb() != nil
+    speed(qb(), injury_speed)
+    log("s1: hobbled QB")
   end
 end
