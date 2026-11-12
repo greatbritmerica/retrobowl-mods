@@ -12,6 +12,7 @@ or later.
   or `script: rbmod_script.txt NOT loaded - line N: …`.
 
 Example: `examples/rbmod_script.txt` (the Hail Mary), with its button rules in `examples/hail_mary_rules.txt`.
+`examples/step1_script.txt` adds a super bullet throw, a screen pass, a stop-and-go button and light injuries; it needs no rules file and can be pasted below the Hail Mary.
 
 ## Shape of a script
 
