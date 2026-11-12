@@ -13,6 +13,8 @@ or later.
 
 Example: `examples/rbmod_script.txt` (the Hail Mary), with its button rules in `examples/hail_mary_rules.txt`.
 `examples/step1_script.txt` adds a super bullet throw, a screen pass, a stop-and-go button and light injuries; it needs no rules file and can be pasted below the Hail Mary.
+From mod build v90, while the script's "Super throw" button is on, a second-finger tap on a receiver as you aim
+fires a bullet at him (`src/offtools.c` super throw, flight math in `src/bullet.c`); its tuning is on the Tune tab.
 
 ## Shape of a script
 

@@ -45,4 +45,7 @@ const TuneDef RB_TUNE[T_COUNT] = {
     { "hail_frames", 120.0, 40.0, 300.0 },
     { "hail_depth", 5.0, 1.0, 9.0 },
     { "hail_defenders", 1.0, 0.0, 4.0 },
+    { "super_pace", 12.0, 6.0, 24.0 },
+    { "super_catch_h", 20.0, 0.0, 50.0 },
+    { "super_tap_reach", 90.0, 30.0, 200.0 },
 };

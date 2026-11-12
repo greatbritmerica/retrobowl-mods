@@ -9,6 +9,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Test the super throw flight math
+        run: mkdir -p build && cc -o build/bullet_test tests/bullet_test.c src/bullet.c -lm && build/bullet_test
       - name: Build libRBMod.dylib
         run: make
       - name: Inspect

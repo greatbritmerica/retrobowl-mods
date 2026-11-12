@@ -46,6 +46,9 @@ typedef enum {
     T_HAIL_FRAMES,
     T_HAIL_DEPTH,
     T_HAIL_DEFENDERS,
+    T_SUPER_PACE,
+    T_SUPER_CATCH_H,
+    T_SUPER_TAP_REACH,
     T_COUNT
 } TuneId;
 

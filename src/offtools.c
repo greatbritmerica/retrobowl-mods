@@ -18,6 +18,7 @@
 #include "rules.h"
 #include "script.h"
 #include "input.h"
+#include "bullet.h"
 
 #define SLOT_MY_ROUTE   0x100fa6ce8ULL
 #define VA_SET_MY_ROUTE 0x100513734ULL     // gml_Script_s_set_my_route(route_name), run as the receiver
@@ -59,6 +60,7 @@ static struct {
     CInstance *df[16]; double dfx[16]; int ndf, rusher[16];
     CInstance *ol[8]; double ol_d[8], front, rb_d; int nol;                                    // interior linemen (protection calls)
     int fingers; int rules_fired, nhot, push_frames; int hail, hail_set, hail_over, nhdf; CInstance *hdf[10]; double hail_goal, hail_tx, hail_lo, hail_hi, hdf_y[10]; int sneak, kneel, sneak_hold; unsigned sneak_t, t_run; double push; int legs_done; double slide_read; int prot, prot_frames, prot_noted;                            // this play's protection, how long it held someone up
+    CInstance *sup; int sup_i, sup_log; unsigned sup_t; double sup_px[6], sup_py[6], sup_vx[6], sup_vy[6];   // super throw: tapped receiver, receiver motion
 } O;
 
 // Protection call. It stays as set from play to play (shown on the button) until changed.
@@ -266,6 +268,68 @@ static int apply_route(CInstance *rcv, const char *route, const char *name, cons
 }
 
 // ---------------------------------------------------------------- per frame (player on offense)
+// ---- super throw: with the script's "Super throw" button on, a second-finger tap on a receiver while you
+// aim fires a fast, flat ball at where he'll be (src/bullet.c). The script keeps the meter, the button
+// and the no-pick / no-breakup settings.
+// shortcut: keyed to the button label "Super throw" from examples/step1_script.txt; a script function
+// to arm it would be cleaner if a second feature ever needs the tap.
+static int super_armed(void) { return sh_pressed("Super throw"); }
+static void super_track(void) {                                   // each receiver's motion, px per frame
+    for (int i = 0; i < O.nrcv && i < 6; i++) {
+        if (!O.rcv[i]) continue;
+        double x = rb_get_builtin_real(O.rcv[i], SLOT_X), y = rb_get_builtin_real(O.rcv[i], SLOT_Y);
+        if (O.sup_px[i] || O.sup_py[i]) { O.sup_vx[i] = x - O.sup_px[i]; O.sup_vy[i] = y - O.sup_py[i]; }
+        O.sup_px[i] = x; O.sup_py[i] = y;
+    }
+}
+static double builtin1(const char *name, CInstance *self, double a) {
+    void *fn = rb_builtin(name);
+    double av[1] = { a };
+    return fn ? rb_call(fn, self, 1, av) : 0;
+}
+// a new finger (bit dev in mask) went down while aiming: pick the receiver under it and let go of the
+// aim for you this frame, so the game throws now
+static void super_tap(CInstance *ball, int mask) {
+    int dev = 1;
+    while (dev <= 3 && !(mask & (1 << dev))) dev++;
+    if (dev > 3) return;
+    double tx = builtin1("device_mouse_x", ball, dev), ty = builtin1("device_mouse_y", ball, dev);
+    int best = -1; double bd = T(T_SUPER_TAP_REACH);
+    for (int i = 0; i < O.nrcv && i < 6; i++) {
+        if (!O.rcv[i]) continue;
+        double d = hypot(rb_get_builtin_real(O.rcv[i], SLOT_X) - tx, rb_get_builtin_real(O.rcv[i], SLOT_Y) - ty);
+        if (d < bd) { bd = d; best = i; }
+    }
+    if (best < 0) { rb_log("offtools: super tap at %.0f,%.0f (finger %d) - no receiver within %.0f px", tx, ty, dev, T(T_SUPER_TAP_REACH)); return; }
+    O.sup = O.rcv[best]; O.sup_i = best; O.sup_t = O.t;
+    int down; double gx, gy;
+    rb_real_touch(ball, &down, &gx, &gy);
+    rb_vf.gui_x = gx; rb_vf.gui_y = gy;
+    rb_vf.room_x = builtin1("device_mouse_x", ball, 0); rb_vf.room_y = builtin1("device_mouse_y", ball, 0);
+    rb_vf.down = 0; rb_vf.prev_down = 1; rb_vf.active = 1;      // released this frame (rb_cpuqb_step hands it back next frame)
+    rb_log("offtools: super tap at %.0f,%.0f (finger %d) -> receiver %d, %.0f px away - releasing the throw", tx, ty, dev, best, bd);
+}
+// the throw just left: send it at the tapped receiver as a bullet
+static void super_throw(CInstance *ball) {
+    double qx = rb_get_builtin_real(ball, SLOT_X), qy = rb_get_builtin_real(ball, SLOT_Y), h0 = rb_get_inst_real(ball, SLOT_HEIGHT);
+    double rx = rb_get_builtin_real(O.sup, SLOT_X), ry = rb_get_builtin_real(O.sup, SLOT_Y);
+    BulletPlan b;
+    if (!rb_bullet_plan(qx, qy, h0, rx, ry, O.sup_vx[O.sup_i], O.sup_vy[O.sup_i], T(T_SUPER_PACE), T(T_SUPER_CATCH_H), &b)) {
+        rb_log("offtools: super throw - receiver too close, left as thrown"); return;
+    }
+    double was_v = rb_get_inst_real(ball, SLOT_VELOCITY), was_dir = rb_get_inst_real(ball, SLOT_DIREC);
+    rb_set_inst_real(ball, SLOT_VELOCITY, b.speed);
+    rb_set_inst_real(ball, SLOT_ZVEL, b.zvel);
+    // the aim is kept in two places and it isn't known yet which one steers the flight: set both
+    rb_set_inst_real(ball, SLOT_DIREC, atan2(b.dy, b.dx) * 57.29577951308232);             // screen degrees (y down)
+    double gm = atan2(-b.dy, b.dx) * 57.29577951308232;                                     // GameMaker degrees (y up)
+    rb_set_builtin_real(ball, SLOT_DIRECTION, gm < 0 ? gm + 360 : gm);
+    g_land = 1; g_land_x = b.lx; g_land_y = b.ly;                                           // landing_x()/_y() for the script
+    O.sup_log = 4;
+    rb_log("offtools: super throw at receiver %d -> %.0f,%.0f in %.0f frames (speed %.2f -> %.2f, lift %.2f, height %.0f, aim %.0f -> %.0f deg)",
+           O.sup_i, b.lx, b.ly, b.frames, was_v, b.speed, b.zvel, h0, was_dir, atan2(b.dy, b.dx) * 57.3);
+}
+
 void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
     O.t++;
     if (!human_offense) {
@@ -462,8 +526,17 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
     }
     if (O.pa_live && O.t - O.t_snap >= PA_FRAMES) O.pa_live = 0;
     if (st == 3 || st == 5 || st == 19) O.pa_live = 0;              // ball's out or someone has it
+    if (st == 1 || st == 2) super_track();
+    if (O.sup && st == 2 && O.t == O.sup_t + 2)
+        rb_log("offtools: super tap release ignored - still aiming; the next throw still goes to receiver %d", O.sup_i);
+    if (O.sup && O.prev_st == 2 && st == 3) super_throw(ball);
+    if (O.sup_log && st == 3) {                                  // did the flight follow? (first frames after a super throw)
+        O.sup_log--;
+        rb_log("offtools: super flight %.0f,%.0f height %.0f direc %.0f direction %.0f", rb_get_builtin_real(ball, SLOT_X), rb_get_builtin_real(ball, SLOT_Y),
+               rb_get_inst_real(ball, SLOT_HEIGHT), rb_get_inst_real(ball, SLOT_DIREC), rb_get_builtin_real(ball, SLOT_DIRECTION));
+    }
     if (O.prev_st == 2 && st == 3) { g_in_release = 1; rb_script_fire("release", 0); g_in_release = 0; }
-    if (O.hail && O.prev_st == 2 && st == 3) hail_throw(ball);
+    if (O.hail && !O.sup && O.prev_st == 2 && st == 3) hail_throw(ball);   // a super throw wins over the Hail Mary
     if (O.t_snap && !O.legs_done && st != 0) rb_script_fire("frame", 0);   // every frame of your play, from the snap
     if (O.hail && !O.hail_over && O.t_snap && (st == 5 || st == 4 || st == 6 || st == 7 || st == 8 || st == 9 || st == 11)) {
         if (!(st == 5 && O.prev_st != 3)) { O.hail_over = 1; rb_log("offtools: Hail Mary over (ball state %.0f)", st); }
@@ -483,7 +556,7 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
 
     // pump fake while aiming
     if (st == 2 && O.pumps < MAX_PUMPS && !O.sneak) {
-        if (!O.pump_shown) {
+        if (!O.pump_shown && !super_armed()) {
             static const char *b[1] = { "PUMP" };
             rb_ui_panel(RB_PANEL_PUMP, RB_SIDE_LEFT_BOTTOM, 124, "", "", b, 1, cb_pump);
             O.pump_shown = 1;
@@ -498,7 +571,9 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
             double a[2] = { dev, 1 };                                  // finger dev+1, mb_left
             if (rb_call(f_held, ball, 2, a) > 0.5) down |= 1 << dev;
         }
-        if ((down & ~O.fingers) && !g_ev_pump) { g_ev_pump = 2; rb_log("offtools: extra finger down (mask %d)", down); }
+        int fresh = down & ~O.fingers;
+        if (fresh && super_armed()) { if (!O.sup) super_tap(ball, fresh); }             // super throw: the tap picks the target
+        else if (fresh && !g_ev_pump) { g_ev_pump = 2; rb_log("offtools: extra finger down (mask %d)", down); }
         O.fingers = down;
     } else {
         O.fingers = 0;

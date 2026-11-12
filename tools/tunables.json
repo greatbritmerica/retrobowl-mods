@@ -474,5 +474,38 @@
   "max": 4,
   "step": 1,
   "help": "Deep defenders who race back with them: one per receiver plus this many."
+ },
+ {
+  "group": "Super throw",
+  "key": "super_pace",
+  "label": "Bullet speed",
+  "def": 12,
+  "min": 6,
+  "max": 24,
+  "step": 1,
+  "pct": false,
+  "help": "How fast the super throw travels, in pixels a frame on average. A normal throw starts near 8 and slows down."
+ },
+ {
+  "group": "Super throw",
+  "key": "super_catch_h",
+  "label": "Height it arrives at",
+  "def": 20,
+  "min": 0,
+  "max": 50,
+  "step": 1,
+  "pct": false,
+  "help": "How high the ball is when it reaches the receiver. Lower is flatter; too low and he may drop it."
+ },
+ {
+  "group": "Super throw",
+  "key": "super_tap_reach",
+  "label": "How close the tap must be",
+  "def": 90,
+  "min": 30,
+  "max": 200,
+  "step": 5,
+  "pct": false,
+  "help": "How near a receiver your second-finger tap has to land, in pixels, for the super throw to pick him."
  }
 ]

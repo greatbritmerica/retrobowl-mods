@@ -49,6 +49,7 @@ enum { OBJ_BTN_FIELDGOAL = 16, OBJ_BALL = 3, OBJ_CONTROLLER = 44, OBJ_MASTER = 8
 #define SLOT_DIRECTION       0x100fb0a98ULL
 #define SLOT_VELOCITY        0x100fb02d8ULL
 #define SLOT_ZVEL            0x100fb07b8ULL
+#define SLOT_HEIGHT          0x100fa5c18ULL   // ball: height off the ground
 #define SLOT_DRAGDIST        0x100fa4c28ULL
 #define SLOT_DRAGX           0x100fa4c38ULL
 #define SLOT_DRAGY           0x100fa4c48ULL

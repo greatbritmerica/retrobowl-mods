@@ -317,7 +317,6 @@ static double dir_to(double fx, double fy, double tx, double ty) {
 }
 
 #define SLOT_BALLDIST   0x100fa1d78ULL     // player: distance to the ball (the game's own catch check uses <= 20)
-#define SLOT_HEIGHT     0x100fa5c18ULL     // ball: height off the ground
 #define VA_S_DROP_BALL  0x100395780ULL     // gml_Script_s_drop_ball(false), run as the player: the game's own tipped pass
 
 #define FIELD_TOP        141.0   // the sidelines (y), from where balls have gone out of bounds in the logs

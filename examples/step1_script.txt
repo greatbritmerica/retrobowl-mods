@@ -11,9 +11,12 @@
 
 # ============================================================
 # 1. SUPER BULLET THROW
-# Completions fill a meter. When it's full, a "Super throw" button appears:
-# tap it, throw, and the receiver nearest the landing spot runs under it
-# with no interception chance.
+# Completions fill a meter. When it's full, a "Super throw" button appears.
+# Tap it, start aiming, then tap a receiver with a second finger: the QB fires
+# a fast, flat bullet at where he'll be (needs mod build v90 or later; on v89,
+# throw normally and the receiver nearest the landing spot runs under it).
+# No interception, breakup or tip on a super throw. Bullet speed, arrival height
+# and how close the tap must be are on the Workshop's Tune tab (Super throw).
 # ============================================================
 
 on presnap
