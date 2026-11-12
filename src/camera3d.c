@@ -11,7 +11,7 @@
 #include "camera3d.h"
 
 #ifndef RB_CAM3D
-#define RB_CAM3D 1
+#define RB_CAM3D 0  // off until the camera gets its full pass; build with RB_CAM3D=1 to try it
 #endif
 int rb_cam3d_on = RB_CAM3D;
 
