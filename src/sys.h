@@ -41,5 +41,6 @@ double sin(double x);
 double cos(double x);
 double fabs(double x);
 double floor(double x);
+double fmod(double x, double y);
 double hypot(double x, double y);
 #endif

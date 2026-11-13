@@ -20,6 +20,7 @@
 #include "input.h"
 #include "bullet.h"
 #include "ocbrain.h"
+#include "punt.h"
 
 #define SLOT_MY_ROUTE   0x100fa6ce8ULL
 #define VA_SET_MY_ROUTE 0x100513734ULL     // gml_Script_s_set_my_route(route_name), run as the receiver
@@ -688,7 +689,7 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
     }
 
     // pump fake while aiming
-    if (st == 2 && O.pumps < MAX_PUMPS && !O.sneak) {
+    if (st == 2 && O.pumps < MAX_PUMPS && !O.sneak && !rb_punt_play()) {   // (a punt play: the second finger is the kick)
         if (!O.pump_shown && !super_armed()) {
             static const char *b[1] = { "PUMP" };
             rb_ui_panel(RB_PANEL_PUMP, RB_SIDE_LEFT_BOTTOM, 124, "", "", b, 1, cb_pump);
@@ -1267,6 +1268,7 @@ void rb_off_cpu_drive(void) {
 }
 // the real line of scrimmage this play (x), or a huge negative before it is known
 double rb_off_los(void) { return O.ball && O.fwd ? O.los : -1e9; }
+double rb_off_fwd(void) { return O.ball ? O.fwd : 0; }
 // seconds since the snap on your pass play (-1 when there is none)
 double rb_off_snap_seconds(void) { return O.ball && O.t_snap ? (O.t - O.t_snap) / 60.0 : -1; }
 // the QB or an interior lineman: never the man a pass is going to

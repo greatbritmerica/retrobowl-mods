@@ -58,6 +58,21 @@ typedef enum {
     T_OC_KEEP_PCT,
     T_JUKE_REACH,
     T_JUKE_WINDOW,
+    T_TOSS_ON,
+    T_TOSS_FLIP,
+    T_PUNT_ON,
+    T_PUNTER_DEPTH,
+    T_PUNT_MIN,
+    T_PUNT_MAX,
+    T_PUNT_AIM_MAX,
+    T_PUNT_FLIGHT,
+    T_SHANK_POWER,
+    T_SHANK_CHANCE,
+    T_PUNT_RETURN,
+    T_PUNT_DIST,
+    T_PUNT_SPREAD,
+    T_PRACTICE_ON,
+    T_PRACTICE_BOOST,
     T_COUNT
 } TuneId;
 

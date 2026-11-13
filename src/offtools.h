@@ -8,6 +8,7 @@ int  rb_off_super_ignores_ball(CInstance *player);                        // a d
 int  rb_off_spr_draw(long sprite);                                           // 1 = skip this sprite (aim line on a super throw)
 int  rb_off_hide_ball_draw(void);                                           // 1 = skip the ball's Draw event (aiming a super throw)
 void rb_off_cpu_drive(void);                                              // the CPU has the ball (resets the back's legs)
+double rb_off_fwd(void);                                                  // +1/-1: the way your offense attacks this play (0 = not known yet)
 double rb_off_los(void);                                                  // real line of scrimmage (x) this play, or < -1e8
 double rb_off_snap_seconds(void);                                         // seconds since the snap on your pass play, or -1
 int  rb_off_not_a_target(CInstance *inst);                                // the QB or an interior lineman

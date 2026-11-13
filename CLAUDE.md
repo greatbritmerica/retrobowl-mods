@@ -34,5 +34,9 @@ Claude can't run the game, so every change is tested by the user on the phone.
 - No game value tells players apart (`id`, `player_id`, `uid`, `number`, `slot` all read 0); only `qb()`
   and `back()` find the same player again. `ball().holder` reads 0 or -4, never who has it.
 - Steering can't pull a lineman out of a block.
+- Field: your yard line = (1310 - x) / 20 (20 px a yard; your team attacks toward -x). The game has no
+  visible coin toss: possession at MATCH_START is the kicking team. Punts are instant (`s_punt`); the CPU
+  punt return turns one into the game's kickoff return (`src/punt.c`; the KICKOFF stage number is learned
+  from the log at the first kickoff after app start). v97 adds no hook points: new work rides on `hooks.def`'s.
 - The mod already reads second-finger taps while aiming (`offtools.c`, pump fake) and can throw a pass at a
   chosen receiver through the virtual finger (`cpuqb.c`): the basis for tap-to-target throws.

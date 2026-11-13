@@ -12,6 +12,9 @@
 #include "rules.h"
 #include "script.h"
 #include "camera3d.h"
+#include "punt.h"
+#include "toss.h"
+#include "practice.h"
 
 enum {
 #define HOOK(name, va, insn) HK_##name,
@@ -57,6 +60,7 @@ RValue *hook_change_possession(CInstance *self, CInstance *other, RValue *res, i
     rb_log("possession %g -> %g (human team %g) caller %llx stage %g", before, poss, human, caller,
            rb_get_obj_real(OBJ_CONTROLLER, SLOT_COMM_STAGE));
     if (before == human && poss != human) rb_off_drive_end("possession");   // minute drill
+    rb_punt_possession(caller, before, poss, human);                        // punt spots, CPU punt -> return
     g_choice = CHOICE_NONE;
     g_pending = 0;
     if (human >= 0 && poss != human && !simming_action(self, other)) {
@@ -67,15 +71,20 @@ RValue *hook_change_possession(CInstance *self, CInstance *other, RValue *res, i
     return r;
 }
 
+static double g_uc_stage = -1;    // comm_stage as the current commentary step began (its header names it)
 RValue *hook_update_commentary(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
-    if (g_pending && g_hub_depth == 0) {          // hold: comm_proceed stays set, retried next frame
+    if (g_hub_depth == 0 && (g_pending || rb_toss_step())) {   // hold: comm_proceed stays set, retried next frame
         res->i64 = 0;
         res->kind = RV_UNDEFINED;
         return res;
     }
+    double was = g_uc_stage;
+    g_uc_stage = rb_get_obj_real(OBJ_CONTROLLER, SLOT_COMM_STAGE);
     g_hub_depth++;
     RValue *r = ORIG(update_commentary)(self, other, res, argc, argv);
     g_hub_depth--;
+    g_uc_stage = was;
+    if (g_hub_depth == 0) { rb_toss_after_commentary(); rb_punt_after_commentary(); }
     return r;
 }
 
@@ -114,6 +123,14 @@ RValue *hook_slog(CInstance *self, CInstance *other, RValue *res, int argc, RVal
     line[n < (int)sizeof line ? n : (int)sizeof line - 1] = 0;
     rb_log("slog: %s", line);
     if (!strncmp(line, "s_create_message[", 17)) fourth_check(line, "slog");
+    if (!strncmp(line, ">>>> S_UPDATE_COMMENTARY: ", 26)) {          // a commentary step starts: its stage by name
+        char stage[32] = "";
+        sscanf(line + 26, "%31s", stage);
+        rb_toss_header(stage);
+        rb_punt_header(stage, g_uc_stage);
+    }
+    rb_punt_slog(line);
+    rb_practice_slog(line);
     const char *sc = strstr(line, "score[");                         // the game's own score line: [team 0 | team 1]
     if (sc) { int a, b; if (sscanf(sc, "score[%d | %d]", &a, &b) == 2) { g_score[0] = a; g_score[1] = b; } }
     if (!strncmp(line, "s_destroy_match_objects", 23)) {             // ball and players are about to be freed
@@ -121,6 +138,7 @@ RValue *hook_slog(CInstance *self, CInstance *other, RValue *res, int argc, RVal
         g_play_ball = 0;
         g_ret.who = 0; g_ret.nof = 0;
         rb_off_apply_penalty();
+        rb_punt_destroy();
         rb_off_forget(); rb_dbrain_forget();
     }
     return ORIG(slog)(self, other, res, argc, argv);
@@ -130,8 +148,15 @@ RValue *hook_action_result(CInstance *self, CInstance *other, RValue *res, int a
     char b[48];
     rb_log("action_result(%s) possession %g caller %llx", argc > 0 ? rb_rv_str(argv[0], b, sizeof b) : "-",
            rb_get_obj_real(OBJ_CONTROLLER, SLOT_POSSESSION), RB_CALLER());
-    RValue *r = ORIG(action_result)(self, other, res, argc, argv);
-    rb_log("action_result done: possession %g", rb_get_obj_real(OBJ_CONTROLLER, SLOT_POSSESSION));
+    int pr = argc > 0 && argv && argv[0] ? rb_punt_action_result(rb_rv_real(argv[0])) : PR_PASS;
+    if (pr == PR_SWALLOW) {                              // your Punt: the 4th-down play comes up instead
+        res->i64 = 0; res->kind = RV_UNDEFINED;
+        return res;
+    }
+    RValue five = {0}; five.kind = RV_REAL; five.real = 5;     // (a fresh value: the caller's may be a shared constant)
+    RValue *av5[1] = { &five };
+    RValue *r = pr == PR_AS_PUNT ? ORIG(action_result)(self, other, res, 1, av5) : ORIG(action_result)(self, other, res, argc, argv);
+    rb_log("action_result done: possession %g, yard line %.1f", rb_get_obj_real(OBJ_CONTROLLER, SLOT_POSSESSION), rb_get_obj_real(OBJ_CONTROLLER, SLOT_SCRIMMAGE));
     return r;
 }
 
@@ -269,6 +294,7 @@ RValue *hook_update_ball(CInstance *self, CInstance *other, RValue *res, int arg
         rb_tune_play_reset();
         rb_rules_new_play();
     }
+    if (rb_punt_ball(self, other)) { res->i64 = 0; res->kind = RV_UNDEFINED; return res; }   // a punt in the air
     double human = rb_get_obj_real(OBJ_MASTER, SLOT_PLAYERTEAMINDEX);
     double poss = rb_get_obj_real(OBJ_CONTROLLER, SLOT_POSSESSION);
     int cpu_offense = human >= 0 && poss >= 0 && poss != human;
@@ -378,6 +404,7 @@ long hook_spr_draw(CInstance *self, long sprite, long colour, float sub, float x
                    float xs, float ys, float rot, float alpha) {
     RbDrawSprFn orig = (RbDrawSprFn)RB_TRAMP(HK_spr_draw);
     rb_spr_calls++;
+    rb_practice_tick(self);                                             // the week's practice pick (menus have no other per-frame hook)
     if (rb_off_spr_draw(sprite)) return 0;
     if (!rb_cam3d_in_gui_pass && rb_cam3d_on && rb_cam3d_active())
         return rb_cam3d_spr_draw(orig, self, sprite, colour, sub, x, y, xs, ys, rot, alpha);
@@ -408,6 +435,7 @@ RValue *hook_get_destination(CInstance *self, CInstance *other, RValue *res, int
     rb_def_after_ai(self);               // ...the player's own man stays his
     rb_dlearn_after_ai(self);
     rb_off_after_ai(self);               // play action / pump fake (player's offense)
+    rb_punt_after_ai(self);              // everybody holds while your punt is up
     return r;
 }
 
@@ -439,7 +467,7 @@ void hook_controller_gui(CInstance *self, CInstance *other) {
     cpu_fourth_action(self, other);
     rb_cam3d_gui_pass(self, gui_draw_player, gui_draw_ball, gui_draw_text);      // standing players + sky, under the HUD
     ORIG_EV(controller_gui)(self, other);
-    if (g_match_live) rb_off_gui(self);                                  // on top of the HUD
+    if (g_match_live) { rb_off_gui(self); rb_punt_gui(self); }           // on top of the HUD
 }
 
 // =============================================================== install
