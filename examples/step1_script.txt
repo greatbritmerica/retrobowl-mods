@@ -96,16 +96,17 @@ end
 
 # ============================================================
 # 2. SCREEN PASS
-# Tap "Screen". The back stays in to block for a moment, then slips out to the
-# side with more room and sets up just behind the line. The linemen on that
-# side let their man go and form a wall in front of him; after the catch they
-# lead him upfield.
+# Tap "Screen". The back chips for a moment, then slips out to the side with
+# more room and sets up just behind the line while the line keeps blocking.
+# Once he's nearly set, the linemen on that side let their man go and form a
+# wall just past the line; after the catch they lead him upfield.
 # ============================================================
 
 on presnap
   # --- Screen pass: change these ---
   screen_on = 1          # 1 = on, 0 = off
-  screen_block = 1.0     # seconds the back and line block before the screen sets up
+  screen_slip = 0.3      # seconds the back blocks before he slips out
+  screen_block = 1.2     # seconds the line blocks before releasing to form the wall
   screen_out = 5         # yards the back slips out toward the sideline
   screen_behind = 2      # yards behind the line of scrimmage he sets up
   screen_linemen = 3     # how many linemen release to form the wall
@@ -119,7 +120,6 @@ end
 on snap
   scr_ready = 0
   if screen_on and pressed("Screen") and back() != nil
-    scr_logged = 0
     scr_air = 0
     scr_done = 0
     scr_ready = 1
@@ -130,7 +130,7 @@ on snap
     end
     scr_bx = los_x() - fwd() * yard(screen_behind)
     scr_by = max(field_top() + 20, min(field_bottom() - 20, back().y + scr_dy * yard(screen_out)))
-    log("s1: screen spot", scr_bx, scr_by)
+    log("s1: screen spot", scr_bx, scr_by, "back out at", screen_slip, "wall at", screen_block)
   end
 end
 
@@ -143,7 +143,7 @@ on frame
       scr_done = 1
     end
     if not scr_done
-      if since_snap() < screen_block
+      if since_snap() < screen_slip
         # strength 0 = no push: he stands in and blocks
         steer(back(), back().x, back().y, 0)
       elif not scr_air
@@ -152,12 +152,18 @@ on frame
       end
     end
     if since_snap() >= screen_block
-      # before the catch: a wall just in front of his spot; after it: lead him
+      # before the catch: a wall just past the line, in front of his spot
       tx = los_x() + fwd() * yard(1)
       ty = scr_by
       if scr_done
-        tx = back().x + fwd() * yard(screen_lead)
-        ty = back().y
+        # after it: lead him upfield, never back behind the line
+        tx = back().x
+        if (tx - los_x()) * fwd() < 0
+          tx = los_x()
+        end
+        tx = tx + fwd() * yard(screen_lead)
+        # stay in his lane: halfway between the screen spot and where he is now
+        ty = (scr_by + back().y) / 2
       end
       n = 0
       for p in nearest(offense(), scr_bx, scr_by, screen_linemen + 4)
@@ -173,12 +179,8 @@ on frame
         if ok and n < screen_linemen
           steer(p, tx, ty + (n - 1) * yard(2) * scr_dy, 1)
           n = n + 1
-          if not scr_logged
-            log("s1: screen blocker", p.x, p.y)
-          end
         end
       end
-      scr_logged = 1
     end
   end
 end
@@ -197,15 +199,15 @@ end
 on presnap
   # --- Minute drill: change these ---
   md_on = 1             # 1 = on, 0 = off
-  md_window = 10        # seconds after a play ends you have to snap to stay on tempo
+  md_window = 7         # seconds after a play ends you have to snap to stay on tempo
   md_quick = 1.5        # a throw out within this many seconds of the snap counts as quick
   md_short = 5          # a catch within this many yards past the line counts as short
-  md_slow_n = 2         # how many defenders a quick short catch slows
-  md_slow_pct = 60      # how fast slowed and juked defenders move, in percent
-  md_juke_yards = 5     # catches longer than this get the JUKE button
+  md_slow_n = 3         # how many defenders a quick short catch slows
+  md_slow_pct = 45      # how fast slowed and juked defenders move, in percent
+  md_juke_yards = 3     # catches longer than this get the JUKE button
   md_juke_push = 3      # yards a juked tackler is pushed off
   md_push_time = 0.4    # seconds the juked tackler is pushed
-  md_block_pct = 70     # a run-blocked defender's speed, in percent (one shared by two receivers can end up slower)
+  md_block_pct = 55     # a run-blocked defender's speed, in percent (one shared by two receivers can end up slower)
   md_block_time = 4     # seconds after the snap your receivers keep blocking on a run
   if md_on
     if md_active
