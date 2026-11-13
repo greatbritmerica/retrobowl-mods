@@ -19,6 +19,7 @@
 #include "script.h"
 #include "input.h"
 #include "bullet.h"
+#include "ocbrain.h"
 
 #define SLOT_MY_ROUTE   0x100fa6ce8ULL
 #define VA_SET_MY_ROUTE 0x100513734ULL     // gml_Script_s_set_my_route(route_name), run as the receiver
@@ -267,6 +268,75 @@ static int apply_route(CInstance *rcv, const char *route, const char *name, cons
     return ok;
 }
 
+// ---------------------------------------------------------------- offensive coordinator (src/ocbrain.c)
+// Before your snap on Extreme it rewrites the receivers' routes from what worked, away from the zones
+// the CPU defense knows, and learns from each pass (rb_off_oc_lesson, called by dbrain.c).
+extern CInstance *rb_game_controller;                   // cpuqb.c: a new one = a new game
+static OcBrain g_oc; static OcTable g_oct; static int g_oc_loaded, g_oc_sit; static CInstance *g_oc_game, *g_oc_off_game;
+static double oc_rnd(void) { return arc4random_uniform(1000000) / 1000000.0; }
+static void oc_path(char *b, int n) { const char *h = getenv("HOME"); snprintf(b, n, "%s/Documents/rbmod_ocbrain.txt", h ? h : "."); }
+static void oc_save_file(void) { char p[512]; oc_path(p, sizeof p); FILE *f = fopen(p, "w"); if (!f) return; oc_save(&g_oc, f); fclose(f); }
+static const char *OC_POS[3] = { "top", "mid", "low" };
+static const char *OC_SIT[3] = { "short", "medium", "long" };
+static const char *OC_WHY[4] = { "works", "unseen", "surprise", "keep" };
+
+static void oc_call(void) {
+    oc_table_reset(&g_oct);
+    if (!T(T_OC_ON) || !O.offense_snap) return;
+    if (rb_get_obj_real(OBJ_MASTER, SLOT_OP_DIFFICULTY) != 4) {
+        if (g_oc_off_game != rb_game_controller) { g_oc_off_game = rb_game_controller; rb_log("ocbrain: off - not Extreme"); }
+        return;
+    }
+    if (!g_oc_loaded) {
+        char p[512]; oc_path(p, sizeof p); FILE *f = fopen(p, "r");
+        int ok = oc_load(&g_oc, f); if (f) fclose(f);
+        rb_log("ocbrain: %s", ok ? "memory loaded" : "starting fresh (no memory file)");
+        g_oc_loaded = 1; g_oc_game = 0;                    // an app launch counts as a new game below
+    }
+    if (g_oc_game != rb_game_controller) {
+        g_oc_game = rb_game_controller; oc_fade(&g_oc, T(T_OC_FADE)); oc_save_file();
+        rb_log("ocbrain: new game - memory x%.2f", T(T_OC_FADE));
+    }
+    OcCtx c; memset(&c, 0, sizeof c);
+    for (int z = 0; z < 9; z++) c.fam[z] = rb_dbrain_familiarity(z);
+    c.surprise = T(T_OC_SURPRISE); c.keep = T(T_OC_KEEP_PCT); c.counter = T(T_OC_COUNTER);
+    g_oc_sit = oc_situation(rb_rctx.togo);
+    int idx[6], n = 0, used[7] = {0}, noted = 0; char note[96] = "";
+    for (int i = 0; i < O.nrcv; i++) if (O.rcv[i] && O.rcv[i] != O.rb) idx[n++] = i;   // top to bottom
+    for (int k = 0; k < n; k++) {
+        CInstance *r = O.rcv[idx[k]];
+        int pos = k == 0 ? OC_TOP : k == n - 1 ? OC_BOT : OC_MID;
+        double side_px = (O.rcv_y[idx[k]] - O.qby) * (O.fwd > 0 ? 1 : -1);          // as dbrain.c's zones
+        int side = side_px < -60 ? 0 : side_px > 60 ? 2 : 1, why = 0;
+        int route = oc_pick(&g_oc, pos, side, g_oc_sit, &c, used, oc_rnd, &why);
+        double vanilla = rb_get_inst_real(r, SLOT_MY_ROUTE);
+        if (route != OC_KEEP && !apply_route(r, ROUTES[route].route, ROUTES[route].name, OC_POS[pos])) { route = OC_KEEP; why = OC_WHY_KEEP; }
+        used[route] = 1;
+        oc_table_set(&g_oct, r, route, pos);
+        rb_log("ocbrain: call %s %s zone %d (%s) vanilla path %g", OC_POS[pos], route == OC_KEEP ? "keep" : ROUTES[route].name,
+               oc_zone(route, side), OC_WHY[why], vanilla);
+        if (!noted && why != OC_WHY_SURPRISE) {
+            char reason[48];
+            if (why == OC_WHY_WORKS) snprintf(reason, sizeof reason, "%.0f of %.0f worked on %s", g_oc.ok[route][pos][g_oc_sit], g_oc.att[route][pos][g_oc_sit], OC_SIT[g_oc_sit]);
+            else snprintf(reason, sizeof reason, "%s", why == OC_WHY_KEEP ? "the book call" : "they haven't seen it");
+            snprintf(note, sizeof note, "OC: %s %s - %s", route == OC_KEEP ? "Keep" : ROUTES[route].name, OC_POS[pos], reason);
+            noted = 1;
+        }
+    }
+    if (!noted && n) snprintf(note, sizeof note, "OC: a curveball");
+    if (n) snprintf(O.note, sizeof O.note, "%s", note);   // after the loop: apply_route writes O.note too
+}
+
+void rb_off_oc_lesson(CInstance *rcv, int ok, double yds) {
+    int i = oc_table_find(&g_oct, rcv);
+    if (i < 0) return;                                     // the back, a lineman, nobody: nothing to learn
+    oc_learn(&g_oc, g_oct.route[i], g_oct.pos[i], g_oc_sit, ok, yds);
+    oc_save_file();
+    rb_log("ocbrain: lesson %s %s %s ok=%d yds=%.1f", g_oct.route[i] == OC_KEEP ? "keep" : ROUTES[g_oct.route[i]].name,
+           OC_POS[g_oct.pos[i]], OC_SIT[g_oc_sit], ok, yds);
+    oc_table_reset(&g_oct);                                // one lesson per play
+}
+
 // ---------------------------------------------------------------- per frame (player on offense)
 // ---- super throw: with the script's "Super throw" button on, a second-finger tap on a receiver while you
 // aim fires a fast, flat ball at where he'll be (src/bullet.c). The script keeps the meter, the button
@@ -422,6 +492,7 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
             g_pen.pending = 0;
             rb_log("offtools: situation - quarter %.0f, %.0f s left, down %.0f & %.1f, yard line %.1f (%.0f to the goal), score %+.0f",
                    rb_rctx.quarter, rb_rctx.clock, rb_rctx.down, rb_rctx.togo, g_pre.scrim, rb_rctx.goal, rb_rctx.score_diff);
+            oc_call();                                            // before scripts and hot routes, so they win
             rb_rules_fire("presnap", 0);
         }
         if (!O.presnap_shown) show_presnap();
@@ -446,7 +517,10 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
                 if (O.rcv[O.pick] == O.rb) snprintf(who, sizeof who, "RB");
                 else if (O.pick == 0) snprintf(who, sizeof who, "top WR");
                 else snprintf(who, sizeof who, "receiver %d", O.pick + 1);
-                apply_route(O.rcv[O.pick], ROUTES[e - 1].route, ROUTES[e - 1].name, who);
+                if (apply_route(O.rcv[O.pick], ROUTES[e - 1].route, ROUTES[e - 1].name, who)) {
+                    int k = oc_table_find(&g_oct, O.rcv[O.pick]);            // the coordinator credits your call
+                    if (k >= 0) oc_table_set(&g_oct, O.rcv[O.pick], e - 1, g_oct.pos[k]);
+                }
                 O.nhot++;
             }
             show_presnap();
@@ -797,7 +871,11 @@ void sh_speed(void *p, double pct) {
     double a = rb_get_inst_real(p, SLOT_MY_ACCEL);
     if (a > 0 && a < 100) rb_set_inst_real(p, SLOT_MY_ACCEL, a * pct / 100);
 }
-int sh_route(void *p, const char *route) { return p ? apply_route(p, route, route, "script") : 0; }
+int sh_route(void *p, const char *route) {
+    if (!p) return 0;
+    oc_table_reset(&g_oct);                                // a scripted route play teaches the coordinator nothing
+    return apply_route(p, route, route, "script");
+}
 void sh_icon(void *p) {
     if (!p) return;
     for (int i = 0; i < g_nicons; i++) if (g_icons[i] == p) return;
@@ -996,14 +1074,14 @@ void rb_rules_do_play(const char *what, double v) {
     if (!strcmp(what, "push")) { O.push = v > 0 ? v / 100 : 1.0; rb_log("offtools: rule - push at %.0f%%", O.push * 100); return; }
     if (O.t_snap || O.st != 0) { rb_log("offtools: rule '%s' only works before the snap", what); return; }
     if (!strcmp(what, "hailmary")) {
-        for (int i = 0; i < O.nrcv; i++) if (O.rcv[i]) apply_route(O.rcv[i], "route_streak", "Streak", "everyone");
+        for (int i = 0; i < O.nrcv; i++) if (O.rcv[i]) { apply_route(O.rcv[i], "route_streak", "Streak", "everyone"); oc_table_reset(&g_oct); }
         O.hail = 1;
         snprintf(O.note, sizeof O.note, "HAIL MARY: everyone to the end zone");
         rb_log("offtools: rule - Hail Mary set for this play");
         return;
     }
     if (!strcmp(what, "deep")) {
-        for (int i = 0; i < O.nrcv; i++) if (O.rcv[i]) apply_route(O.rcv[i], "route_streak", "Streak", "everyone");
+        for (int i = 0; i < O.nrcv; i++) if (O.rcv[i]) { apply_route(O.rcv[i], "route_streak", "Streak", "everyone"); oc_table_reset(&g_oct); }
         snprintf(O.note, sizeof O.note, "Everyone goes deep");
         return;
     }
@@ -1089,6 +1167,7 @@ void rb_off_report(char *buf, size_t n) {
 void rb_off_forget(void) { script_play_reset(); O.ball = 0; O.qb = O.rb = 0; O.nol = O.ndf = O.nrcv = 0; O.t_snap = 0; O.prot = 0; }
 // The other team is running its offense: your back is fresh again for your next drive.
 void rb_off_cpu_drive(void) {
+    oc_table_reset(&g_oct);
     if (g_legs < 1.0) { rb_log("offtools: other team has the ball - back fresh for your next drive (was %.0f%%)", g_legs * 100); g_legs = 1.0; }
 }
 // the real line of scrimmage this play (x), or a huge negative before it is known

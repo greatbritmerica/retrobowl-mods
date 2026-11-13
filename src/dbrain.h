@@ -10,3 +10,4 @@ double rb_dbrain_dial(void);            // CPU defense strength 0.1-1, steered t
 double rb_dbrain_run_share(void);       // how much the player runs (0-1), as the CPU defense sees it
 double rb_dbrain_pass_dial(void);
 double rb_dbrain_run_dial(void);
+double rb_dbrain_familiarity(int zone);   // how well the CPU defense knows a pass zone (0-1)

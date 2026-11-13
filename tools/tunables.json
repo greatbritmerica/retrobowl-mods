@@ -507,5 +507,60 @@
   "step": 5,
   "pct": false,
   "help": "How near a receiver your second-finger tap has to land, in pixels, for the super throw to pick him."
+ },
+ {
+  "group": "Coordinator",
+  "key": "oc_on",
+  "label": "Coordinator calls routes",
+  "def": 1,
+  "min": 0,
+  "max": 1,
+  "step": 1,
+  "pct": false,
+  "help": "1 = before each snap on Extreme your offensive coordinator rewrites the receivers' routes from what it has learned. 0 = the game's own routes."
+ },
+ {
+  "group": "Coordinator",
+  "key": "oc_surprise",
+  "label": "Surprise calls",
+  "def": 0.2,
+  "min": 0,
+  "max": 1,
+  "step": 0.05,
+  "pct": true,
+  "help": "How often a receiver gets a random route instead of the best one, so the coordinator never settles into a pattern."
+ },
+ {
+  "group": "Coordinator",
+  "key": "oc_fade",
+  "label": "Memory kept each new game",
+  "def": 0.9,
+  "min": 0.5,
+  "max": 1,
+  "step": 0.05,
+  "pct": true,
+  "help": "How much of what it learned carries into each new game. 100% never forgets; lower keeps it shifting."
+ },
+ {
+  "group": "Coordinator",
+  "key": "oc_counter",
+  "label": "Counter the defense",
+  "def": 1,
+  "min": 0,
+  "max": 2,
+  "step": 0.25,
+  "pct": false,
+  "help": "How much it avoids areas the CPU defense knows you throw to. 0 = ignore the defense, 2 = double."
+ },
+ {
+  "group": "Coordinator",
+  "key": "oc_keep_pct",
+  "label": "Keep the game's route",
+  "def": 0.15,
+  "min": 0,
+  "max": 1,
+  "step": 0.05,
+  "pct": true,
+  "help": "How often a receiver keeps the route the game gave him, for variety from the game itself."
  }
 ]

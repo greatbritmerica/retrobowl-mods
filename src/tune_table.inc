@@ -48,4 +48,9 @@ const TuneDef RB_TUNE[T_COUNT] = {
     { "super_pace", 12.0, 6.0, 24.0 },
     { "super_catch_h", 20.0, 0.0, 50.0 },
     { "super_tap_reach", 90.0, 30.0, 200.0 },
+    { "oc_on", 1.0, 0.0, 1.0 },
+    { "oc_surprise", 0.2, 0.0, 1.0 },
+    { "oc_fade", 0.9, 0.5, 1.0 },
+    { "oc_counter", 1.0, 0.0, 2.0 },
+    { "oc_keep_pct", 0.15, 0.0, 1.0 },
 };

@@ -136,7 +136,7 @@ Counts like 1–7 mean "at least 1, up to 7".
 | `place` | 3 | place(player, x, y): put a player on a spot. |
 | `steer` | 3–4 | steer(player, x, y [, strength 0-1]): make him run toward a spot this frame. Use it in on frame. |
 | `speed` | 2 | speed(player, percent): change how fast he accelerates for this play. |
-| `route` | 2 | route(player, "route_hitch"): give a route. Names: route_hitch, route_slant, route_dig2, route_curl, route_post, route_corner, route_streak, route_out2, route_flat. |
+| `route` | 2 | route(player, "route_hitch"): give a route. Names: route_hitch, route_slant, route_dig2, route_curl, route_post, route_corner, route_streak, route_out2, route_flat. While the coordinator is on (Tune tab: Coordinator calls routes), it may already have given that route; then route() fails and its block switches off, so turn the coordinator off for scripts that use route(). |
 | `carry` | 1–2 | carry(x [, arc]): in on release, the throw carries along your aim until it reaches x. arc is how fast it rises (normal deep ball 5). |
 | `icon` | 1 | icon(player): a marker at the screen edge pointing to him while he is off screen. Call it in on frame. |
 | `icons` | 1 | icons(list): the same for a whole list. |

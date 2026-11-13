@@ -91,6 +91,7 @@ static double familiarity(int z) {
     double share = B.zone[z] * 3.0;                          // 1/3 of throws in one zone = fully familiar
     return (share > 1 ? 1 : share) * exp_;
 }
+double rb_dbrain_familiarity(int z) { return familiarity(z); }
 
 // ---- balance governor: steer the CPU defense toward stopping about half of the player's passes.
 // rate = recent share of the player's passes that gain yards; the dial (0.1 - 1) sets how hard the
@@ -286,6 +287,7 @@ void rb_dlearn_step(CInstance *ball, CInstance *other, int human_offense) {
             double togo = P.togo > 0 && P.togo < 99 ? P.togo : 10;
             double need = P.down <= 1 ? 0.4 * togo : P.down == 2 ? 0.6 * togo : togo;
             int ok = st == 6 || (st == 4 && yds > 0 && yds >= need - 0.05);
+            if (P.kind == 1 && P.extreme) rb_off_oc_lesson(P.rcv, ok, yds);   // your coordinator learns too
             if (P.extreme) bal_play(ok, P.kind == 1 ? "pass" : "run", yds, P.down, togo);
             // one line for the website's report
             char off[120]; int us = -1, them = -1;
