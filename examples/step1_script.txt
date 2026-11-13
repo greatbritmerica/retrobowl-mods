@@ -96,18 +96,21 @@ end
 
 # ============================================================
 # 2. SCREEN PASS
-# Call one of the game's own plays where the back slips out, then tap "Screen".
-# The back runs the play as normal. After a short pass-block, the linemen
-# nearest him let their man go and run out ahead of him to block.
+# Tap "Screen". The back stays in to block for a moment, then slips out to the
+# side with more room and sets up just behind the line. The linemen on that
+# side let their man go and form a wall in front of him; after the catch they
+# lead him upfield.
 # ============================================================
 
 on presnap
   # --- Screen pass: change these ---
   screen_on = 1          # 1 = on, 0 = off
-  screen_delay = 0.8     # seconds the line pass-blocks before releasing
-  screen_lead = 3        # how many yards in front of the back the blockers aim for
-  screen_linemen = 3     # how many linemen release to block
-  screen_time = 4        # seconds after the snap the blockers keep leading him
+  screen_block = 1.0     # seconds the back and line block before the screen sets up
+  screen_out = 5         # yards the back slips out toward the sideline
+  screen_behind = 2      # yards behind the line of scrimmage he sets up
+  screen_linemen = 3     # how many linemen release to form the wall
+  screen_lead = 3        # after the catch, how many yards in front of him the blockers run
+  screen_time = 5        # seconds after the snap the blockers keep helping
   if screen_on
     button("Screen")
   end
@@ -117,35 +120,66 @@ on snap
   scr_ready = 0
   if screen_on and pressed("Screen") and back() != nil
     scr_logged = 0
+    scr_air = 0
+    scr_done = 0
     scr_ready = 1
-    log("s1: screen")
+    # the side with more room
+    scr_dy = 1
+    if back().y - field_top() > field_bottom() - back().y
+      scr_dy = -1
+    end
+    scr_bx = los_x() - fwd() * yard(screen_behind)
+    scr_by = max(field_top() + 20, min(field_bottom() - 20, back().y + scr_dy * yard(screen_out)))
+    log("s1: screen spot", scr_bx, scr_by)
   end
 end
 
 on frame
-  if scr_ready and back() != nil and since_snap() >= screen_delay and since_snap() < screen_time
-    # aim a few yards in front of wherever the back is now, spread across his path
-    tx = back().x + fwd() * yard(screen_lead)
-    n = 0
-    for p in nearest(offense(), back().x, back().y, screen_linemen + 4)
-      ok = 1
-      if p == qb() or p == back()
-        ok = 0
-      end
-      for r in receivers()
-        if p == r
-          ok = 0
-        end
-      end
-      if ok and n < screen_linemen
-        steer(p, tx, back().y + (n - 1) * yard(1.5), 1)
-        n = n + 1
-        if not scr_logged
-          log("s1: screen blocker", p.x, p.y)
-        end
+  if scr_ready and back() != nil and since_snap() < screen_time
+    # the pass is over once a throw has been in the air and has come down
+    if thrown()
+      scr_air = 1
+    elif scr_air
+      scr_done = 1
+    end
+    if not scr_done
+      if since_snap() < screen_block
+        # strength 0 = no push: he stands in and blocks
+        steer(back(), back().x, back().y, 0)
+      elif not scr_air
+        # full push until he's within a yard of the spot, then ease off so he settles there
+        steer(back(), scr_bx, scr_by, min(1, dist(back().x, back().y, scr_bx, scr_by) / yard(1)))
       end
     end
-    scr_logged = 1
+    if since_snap() >= screen_block
+      # before the catch: a wall just in front of his spot; after it: lead him
+      tx = los_x() + fwd() * yard(1)
+      ty = scr_by
+      if scr_done
+        tx = back().x + fwd() * yard(screen_lead)
+        ty = back().y
+      end
+      n = 0
+      for p in nearest(offense(), scr_bx, scr_by, screen_linemen + 4)
+        ok = 1
+        if p == qb() or p == back()
+          ok = 0
+        end
+        for r in receivers()
+          if p == r
+            ok = 0
+          end
+        end
+        if ok and n < screen_linemen
+          steer(p, tx, ty + (n - 1) * yard(2) * scr_dy, 1)
+          n = n + 1
+          if not scr_logged
+            log("s1: screen blocker", p.x, p.y)
+          end
+        end
+      end
+      scr_logged = 1
+    end
   end
 end
 
