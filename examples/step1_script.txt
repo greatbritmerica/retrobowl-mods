@@ -130,7 +130,7 @@ on snap
     end
     scr_bx = los_x() - fwd() * yard(screen_behind)
     scr_by = max(field_top() + 20, min(field_bottom() - 20, back().y + scr_dy * yard(screen_out)))
-    log("s1: screen spot", scr_bx, scr_by, "back out at", screen_slip, "wall at", screen_block)
+    log("s1: screen spot", scr_bx, scr_by, "out/wall at", screen_slip, screen_block)
   end
 end
 
