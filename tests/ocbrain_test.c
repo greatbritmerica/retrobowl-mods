@@ -85,7 +85,7 @@ int main(void) {
 
     // file_roundtrip
     OcBrain b2; FILE *f = tmpfile();
-    b.att[5][OC_TOP][2] = 3.25; b.ok[6][OC_MID][0] = 0.5;
+    b.att[5][OC_TOP][2] = 3.25; b.att[6][OC_MID][0] = 1; b.ok[6][OC_MID][0] = 0.5;
     assert(oc_save(&b, f)); rewind(f);
     assert(oc_load(&b2, f)); fclose(f);
     for (int i = 0; i < 7; i++) for (int p = 0; p < 3; p++) for (int s = 0; s < 3; s++)
