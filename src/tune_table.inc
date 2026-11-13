@@ -53,4 +53,6 @@ const TuneDef RB_TUNE[T_COUNT] = {
     { "oc_fade", 0.9, 0.5, 1.0 },
     { "oc_counter", 1.0, 0.0, 2.0 },
     { "oc_keep_pct", 0.15, 0.0, 1.0 },
+    { "juke_reach", 2.5, 1.0, 5.0 },
+    { "juke_window", 0.6, 0.2, 1.5 },
 };

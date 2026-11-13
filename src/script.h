@@ -33,6 +33,7 @@ void   sh_speed(void *p, double pct);
 int    sh_route(void *p, const char *route);
 int    sh_carry(double x, double arc);
 void   sh_icon(void *p);
+void   sh_juke_ready(void *p);                              // arm the juke prompt for him this play
 void   sh_log(const char *msg);
 // bridge to the rules (rules.c)
 int    sh_pressed(const char *label);

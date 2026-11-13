@@ -20,6 +20,7 @@
 #include "input.h"
 #include "bullet.h"
 #include "ocbrain.h"
+#include "juke.h"
 
 #define SLOT_MY_ROUTE   0x100fa6ce8ULL
 #define VA_SET_MY_ROUTE 0x100513734ULL     // gml_Script_s_set_my_route(route_name), run as the receiver
@@ -62,6 +63,7 @@ static struct {
     CInstance *ol[8]; double ol_d[8], front, rb_d; int nol;                                    // interior linemen (protection calls)
     int fingers; int rules_fired, nhot, push_frames; int hail, hail_set, hail_over, nhdf; CInstance *hdf[10]; double hail_goal, hail_tx, hail_lo, hail_hi, hdf_y[10]; int sneak, kneel, sneak_hold; unsigned sneak_t, t_run; double push; int legs_done; double slide_read; int prot, prot_frames, prot_noted;                            // this play's protection, how long it held someone up
     CInstance *sup; int sup_i, sup_log; unsigned sup_t; double sup_px[6], sup_py[6], sup_vx[6], sup_vy[6];   // super throw: tapped receiver, receiver motion
+    CInstance *jk, *jk_tk; int jk_shown, jk_done; unsigned jk_t; double jk_cx, jk_cy, jk_px[16], jk_py[16];   // minute drill juke: carrier, tackler, prompt
 } O;
 
 // Protection call. It stays as set from play to play (shown on the button) until changed.
@@ -105,6 +107,16 @@ static void cb_presnap(int i) { g_ev_presnap = i ? i : -1; }
 static void cb_rcv(int i)     { g_ev_rcv = i ? i : -1; }
 static void cb_route(int i)   { g_ev_route = i ? i : -1; }
 static void cb_pump(int i)    { g_ev_pump = i ? 1 : -1; }
+// minute drill: the JUKE panel's tap, and tempo (seconds from your last play ending to this snap; whole seconds)
+static volatile int g_ev_juke;
+static void cb_juke(int i)    { g_ev_juke = i ? 1 : -1; }
+static time_t g_dead_time; static double g_tempo = -1, g_md_q; static int g_md_drive;   // g_md_drive: your drive is on, drive_end not sent yet
+void rb_off_drive_end(const char *why) {
+    if (!g_md_drive) return;
+    g_md_drive = 0;
+    rb_log("md: drive end (%s)", why);
+    rb_script_fire("drive_end", 0);
+}
 
 #define RULE_BTNS 3
 static struct { int valid; double down, togo, scrim, poss; } g_pre;      // where the play in progress started
@@ -339,6 +351,52 @@ void rb_off_oc_lesson(CInstance *rcv, int ok, double yds) {
     oc_table_reset(&g_oct);                                // one lesson per play
 }
 
+// ---- minute drill juke: the script arms it (juke_ready) for a catcher; when a defender closes within reach
+// a JUKE panel shows for a moment, and a tap on it runs the script's  on juke  (tackler() = that defender).
+static void juke_step(void) {
+    if (O.jk && !O.jk_done && O.t_snap && !O.legs_done) {
+        double cx = rb_get_builtin_real(O.jk, SLOT_X), cy = rb_get_builtin_real(O.jk, SLOT_Y);
+        int first = O.jk_cx == 0 && O.jk_cy == 0;
+        double cvx = first ? 0 : cx - O.jk_cx, cvy = first ? 0 : cy - O.jk_cy;
+        if (!O.jk_shown) {
+            CInstance *best = 0; double bd = 1e9;
+            for (int i = 0; i < O.ndf && i < 16; i++) {
+                if (!O.df[i]) continue;
+                double dx = rb_get_builtin_real(O.df[i], SLOT_X), dy = rb_get_builtin_real(O.df[i], SLOT_Y);
+                if (!first && (O.jk_px[i] || O.jk_py[i]) &&
+                    rb_juke_closing(cx, cy, cvx, cvy, dx, dy, dx - O.jk_px[i], dy - O.jk_py[i], T(T_JUKE_REACH) * PX_PER_YD)) {
+                    double d = hypot(cx - dx, cy - dy);
+                    if (d < bd) { bd = d; best = O.df[i]; }
+                }
+                O.jk_px[i] = dx; O.jk_py[i] = dy;
+            }
+            if (best) {
+                static const char *b[1] = { "JUKE" };
+                rb_ui_panel(RB_PANEL_JUKE, RB_SIDE_RIGHT_BOTTOM, 124, "", "", b, 1, cb_juke);
+                O.jk_shown = 1; O.jk_tk = best; O.jk_t = O.t;
+                rb_log("md: juke shown (tackler %.0f px away)", bd);
+            }
+        } else if (O.t - O.jk_t > T(T_JUKE_WINDOW) * 60) {
+            rb_ui_panel_close(RB_PANEL_JUKE); O.jk_shown = 0; O.jk_done = 1;
+            rb_log("md: juke missed (no tap in time)");
+        }
+        O.jk_cx = cx; O.jk_cy = cy;
+    }
+    if (g_ev_juke) {
+        int e = g_ev_juke; g_ev_juke = 0;
+        if (e > 0 && O.jk_shown && !O.jk_done && !O.legs_done && O.t - O.jk_t <= T(T_JUKE_WINDOW) * 60) {
+            rb_ui_panel_close(RB_PANEL_JUKE); O.jk_shown = 0; O.jk_done = 1;
+            rb_log("md: juke tapped");
+            rb_script_fire("juke", 0);
+        } else rb_log("md: juke tap ignored (%s)", e > 0 ? "too late" : "panel not shown");
+    }
+}
+void sh_juke_ready(void *p) {
+    if (!p || !O.t_snap || O.jk_done || O.legs_done) return;
+    O.jk = p;
+    rb_log("md: juke armed");
+}
+
 // ---------------------------------------------------------------- per frame (player on offense)
 // ---- super throw: with the script's "Super throw" button on, a second-finger tap on a receiver while you
 // aim fires a fast, flat ball at where he'll be (src/bullet.c). The script keeps the meter, the button
@@ -407,11 +465,13 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
     if (!human_offense) {
         if (O.presnap_shown) { rb_ui_panel_close(RB_PANEL_PRESNAP); O.presnap_shown = 0; }
         if (O.pump_shown) { rb_ui_panel_close(RB_PANEL_PUMP); O.pump_shown = 0; }
+        if (O.jk_shown) { rb_ui_panel_close(RB_PANEL_JUKE); O.jk_shown = 0; }
         O.ball = 0;
         return;
     }
     double st = rb_get_inst_real(ball, SLOT_STATE);
     if (ball != O.ball) {                                         // new play
+        if (O.jk_shown) rb_ui_panel_close(RB_PANEL_JUKE);
         memset(&O, 0, sizeof O);
         script_play_reset();
         O.ball = ball; O.prev_st = O.st = st;
@@ -494,6 +554,8 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
             g_pen.pending = 0;
             rb_log("offtools: situation - quarter %.0f, %.0f s left, down %.0f & %.1f, yard line %.1f (%.0f to the goal), score %+.0f",
                    rb_rctx.quarter, rb_rctx.clock, rb_rctx.down, rb_rctx.togo, g_pre.scrim, rb_rctx.goal, rb_rctx.score_diff);
+            if (g_md_q == 2 && rb_rctx.quarter >= 3) rb_off_drive_end("half");   // before presnap rules
+            g_md_q = rb_rctx.quarter; g_md_drive = 1;
             oc_call();                                            // before scripts and hot routes, so they win
             rb_rules_fire("presnap", 0);
         }
@@ -536,6 +598,8 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
     if (!O.offense_snap) return;
     if (!O.t_snap) {
         O.t_snap = O.t;
+        g_tempo = g_dead_time ? (double)(time(0) - g_dead_time) : -1;
+        rb_log("md: tempo %.0f s", g_tempo);
         O.run_play = st == 19;
         O.ndf = 0;
         RValue d = rb_obj_ref(OBJ_PLAYER_DF);
@@ -582,6 +646,8 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
     }
     if (!O.legs_done && (st == 4 || st == 6 || st == 7 || st == 8 || st == 9 || st == 11)) {   // play over: the back's legs
         O.legs_done = 1;
+        g_dead_time = time(0);                                    // tempo() counts from here
+        if (O.jk_shown) { rb_ui_panel_close(RB_PANEL_JUKE); O.jk_shown = 0; O.jk_done = 1; rb_log("md: juke missed (play over)"); }
         if (st == 11) { fill_ctx(); rb_rules_fire("sack", 0); }
         if (O.push > 0) rb_log("offtools: push at %.0f%% - defenders in the pile were held for %d frames", O.push * 100, O.push_frames);
         double before = g_legs;
@@ -614,6 +680,7 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
     if (O.prev_st == 2 && st == 3) { g_in_release = 1; rb_script_fire("release", 0); g_in_release = 0; }
     if (O.hail && !O.sup && O.prev_st == 2 && st == 3) hail_throw(ball);   // a super throw wins over the Hail Mary
     if (O.t_snap && !O.legs_done && st != 0) rb_script_fire("frame", 0);   // every frame of your play, from the snap
+    juke_step();
     if (O.hail && !O.hail_over && O.t_snap && (st == 5 || st == 4 || st == 6 || st == 7 || st == 8 || st == 9 || st == 11)) {
         if (!(st == 5 && O.prev_st != 3)) { O.hail_over = 1; rb_log("offtools: Hail Mary over (ball state %.0f)", st); }
     }
@@ -826,6 +893,7 @@ void *sh_one(const char *which) {
     if (!strcmp(which, "qb")) return O.qb;
     if (!strcmp(which, "back")) return O.rb;
     if (!strcmp(which, "ball")) return O.ball;
+    if (!strcmp(which, "tackler")) return O.jk_tk;
     return 0;
 }
 double sh_info(const char *n, int *ok) {
@@ -839,6 +907,7 @@ double sh_info(const char *n, int *ok) {
     if (!strcmp(n, "field_top")) return FIELD_TOP_Y;
     if (!strcmp(n, "field_bottom")) return FIELD_BOT_Y;
     if (!strcmp(n, "legs")) return g_legs * 100;
+    if (!strcmp(n, "tempo")) return g_tempo;
     if (!O.ball || !O.fwd) { *ok = 0; return 0; }
     if (!strcmp(n, "los_x")) return O.los;
     if (!strcmp(n, "fwd")) return O.fwd;
@@ -1166,9 +1235,10 @@ void rb_off_report(char *buf, size_t n) {
 }
 
 // The match objects are being destroyed (every play is rebuilt from scratch): drop every pointer.
-void rb_off_forget(void) { script_play_reset(); oc_table_reset(&g_oct); O.ball = 0; O.qb = O.rb = 0; O.nol = O.ndf = O.nrcv = 0; O.t_snap = 0; O.prot = 0; }
+void rb_off_forget(void) { script_play_reset(); oc_table_reset(&g_oct); if (O.jk_shown) rb_ui_panel_close(RB_PANEL_JUKE); O.jk = O.jk_tk = 0; O.jk_shown = 0; O.ball = 0; O.qb = O.rb = 0; O.nol = O.ndf = O.nrcv = 0; O.t_snap = 0; O.prot = 0; }
 // The other team is running its offense: your back is fresh again for your next drive.
 void rb_off_cpu_drive(void) {
+    g_dead_time = 0;                                              // your next drive's first snap has no tempo
     oc_table_reset(&g_oct);
     if (g_legs < 1.0) { rb_log("offtools: other team has the ball - back fresh for your next drive (was %.0f%%)", g_legs * 100); g_legs = 1.0; }
 }

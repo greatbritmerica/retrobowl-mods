@@ -117,7 +117,7 @@ enum {
     F_RECEIVERS, F_DEFENDERS, F_OFFENSE, F_DEFENSE, F_DEEPEST, F_NEAREST, F_SORT_Y, F_COUNT, F_ITEM,
     F_QB, F_BACK, F_BALL,
     F_DOWN, F_TOGO, F_QUARTER, F_CLOCK, F_LEAD, F_GOAL, F_LOS_X, F_FWD, F_FIELD_TOP, F_FIELD_BOTTOM, F_LEGS,
-    F_LANDING_X, F_LANDING_Y, F_STATE, F_SINCE_SNAP, F_THROWN,
+    F_LANDING_X, F_LANDING_Y, F_STATE, F_SINCE_SNAP, F_THROWN, F_TEMPO, F_TACKLER, F_JUKE_READY,
     F_YARD, F_ENDZONE_X, F_RANDOM, F_CHANCE, F_ABS, F_MIN, F_MAX, F_FLOOR, F_ROUND, F_SQRT, F_DIST, F_STR,
     F_GAME, F_SET_GAME, F_GLOBAL, F_SET_GLOBAL, F_CALL, F_CALL_ON, F_GET, F_SET,
     F_PLACE, F_STEER, F_SPEED, F_ROUTE, F_CARRY, F_ICON, F_ICONS, F_SPREAD,
@@ -132,6 +132,7 @@ static const FnDef FN[F_N] = {
     { "down", 0, 0 }, { "togo", 0, 0 }, { "quarter", 0, 0 }, { "clock", 0, 0 }, { "lead", 0, 0 }, { "goal", 0, 0 },
     { "los_x", 0, 0 }, { "fwd", 0, 0 }, { "field_top", 0, 0 }, { "field_bottom", 0, 0 }, { "legs", 0, 0 },
     { "landing_x", 0, 0 }, { "landing_y", 0, 0 }, { "state", 0, 0 }, { "since_snap", 0, 0 }, { "thrown", 0, 0 },
+    { "tempo", 0, 0 }, { "tackler", 0, 0 }, { "juke_ready", 1, 1 },
     { "yard", 1, 1 }, { "endzone_x", 1, 1 }, { "random", 2, 2 }, { "chance", 1, 1 }, { "abs", 1, 1 }, { "min", 2, 2 },
     { "max", 2, 2 }, { "floor", 1, 1 }, { "round", 1, 1 }, { "sqrt", 1, 1 }, { "dist", 4, 4 }, { "str", 1, 1 },
     { "game", 1, 1 }, { "set_game", 2, 2 }, { "global", 1, 1 }, { "set_global", 2, 2 }, { "call", 1, 7 }, { "call_on", 2, 8 },
@@ -379,7 +380,7 @@ static int block(int *ended_by) {
     }
 }
 static const char *EVENTS[] = { "presnap", "button", "snap", "release", "frame", "throw", "catch", "incomplete",
-                                "intercepted", "sack", "touchdown", "play_end", 0 };
+                                "intercepted", "sack", "touchdown", "play_end", "drive_end", "juke", 0 };
 int rb_script_parse(const char *src) {
     g_err[0] = 0; g_err_line = 0; nnd = 0; nh = 0; tp = 0;
     if (!lex(src)) return -1;
@@ -588,10 +589,11 @@ static Val call(int n) {
         int i = (int)x;
         return i >= 0 && i < l->n ? vinst(l->v[i]) : vnil();
     }
-    case F_QB: case F_BACK: case F_BALL: return vinst(sh_one(fn));
+    case F_QB: case F_BACK: case F_BALL: case F_TACKLER: return vinst(sh_one(fn));
+    case F_JUKE_READY: { void *p = inst_arg(a[0], line, fn); if (p) sh_juke_ready(p); return vnil(); }
     case F_DOWN: case F_TOGO: case F_QUARTER: case F_CLOCK: case F_LEAD: case F_GOAL: case F_LOS_X: case F_FWD:
     case F_FIELD_TOP: case F_FIELD_BOTTOM: case F_LEGS: case F_LANDING_X: case F_LANDING_Y: case F_STATE:
-    case F_SINCE_SNAP: case F_THROWN:
+    case F_SINCE_SNAP: case F_THROWN: case F_TEMPO:
         return info(fn, line);
     case F_YARD: if (!num_arg(a[0], &x, line, fn)) return vnil(); return vnum(x * 20.5);
     case F_ENDZONE_X: {
@@ -839,7 +841,16 @@ static void exec_block(int b) {
 }
 
 // run every enabled handler for an event; a handler that errors is switched off (until the file changes)
+static int script_run_all(const char *ev, const char *arg);
 int rb_script_run(const char *ev, const char *arg) {
+    static int depth;                                        // an event fired from inside a running block would corrupt it
+    if (depth) { char m[96]; snprintf(m, sizeof m, "script: %s skipped (another block is running)", ev); sh_log(m); return 0; }
+    depth++;
+    int r = script_run_all(ev, arg);
+    depth--;
+    return r;
+}
+static int script_run_all(const char *ev, const char *arg) {
     int ran = 0;
     for (int i = 0; i < nh; i++) {
         Handler *h = &H[i];

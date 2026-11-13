@@ -56,6 +56,7 @@ RValue *hook_change_possession(CInstance *self, CInstance *other, RValue *res, i
     double human = rb_get_obj_real(OBJ_MASTER, SLOT_PLAYERTEAMINDEX);
     rb_log("possession %g -> %g (human team %g) caller %llx stage %g", before, poss, human, caller,
            rb_get_obj_real(OBJ_CONTROLLER, SLOT_COMM_STAGE));
+    if (before == human && poss != human) rb_off_drive_end("possession");   // minute drill
     g_choice = CHOICE_NONE;
     g_pending = 0;
     if (human >= 0 && poss != human && !simming_action(self, other)) {

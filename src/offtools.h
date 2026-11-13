@@ -13,4 +13,5 @@ void rb_off_apply_penalty(void);                                          // a r
 void rb_off_gui(CInstance *self);                                         // draw on the GUI layer (Hail Mary receiver icons)
 void rb_off_forget(void);                                                 // match objects destroyed: drop pointers
 int  rb_off_scrambled(void);                                              // the player's QB scrambled and pulled up this play
+void rb_off_drive_end(const char *why);                                    // minute drill: your drive is over (once per drive)
 void rb_off_oc_lesson(CInstance *rcv, int ok, double yds);              // a pass result: your coordinator learns from it

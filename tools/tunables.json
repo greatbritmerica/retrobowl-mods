@@ -562,5 +562,27 @@
   "step": 0.05,
   "pct": true,
   "help": "How often a receiver keeps the route the game gave him, for variety from the game itself."
+ },
+ {
+  "group": "Minute drill",
+  "key": "juke_reach",
+  "label": "Juke prompt distance",
+  "def": 2.5,
+  "min": 1,
+  "max": 5,
+  "step": 0.5,
+  "pct": false,
+  "help": "How close a tackler gets, in yards, before the JUKE button shows."
+ },
+ {
+  "group": "Minute drill",
+  "key": "juke_window",
+  "label": "Juke tap window",
+  "def": 0.6,
+  "min": 0.2,
+  "max": 1.5,
+  "step": 0.1,
+  "pct": false,
+  "help": "Seconds the JUKE button stays up for your tap."
  }
 ]

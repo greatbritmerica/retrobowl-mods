@@ -45,6 +45,8 @@ end
 | `on sack` | When it happens. |
 | `on touchdown` | When it happens. |
 | `on play_end` | After every run or pass play. |
+| `on drive_end` | Your drive is over: you lost the ball (score, punt, turnover) or the half ended. Mod build v93+. |
+| `on juke` | You tapped JUKE in time after `juke_ready()` armed it. Mod build v93+. |
 
 `on catch`, `on incomplete`, `on intercepted`, `on touchdown`, `on play_end` and `landing_x()`/`landing_y()`
 come from the Extreme defense code, so they only happen on Extreme difficulty. `on play_end` doesn't
@@ -112,6 +114,9 @@ Counts like 1–7 mean "at least 1, up to 7".
 | `landing_y` | 0 | Where your pass in the air comes down (y). |
 | `state` | 0 | The ball's state number (3 = in the air, 5 = someone has it). |
 | `since_snap` | 0 | Seconds since the snap. |
+| `tempo` | 0 | Seconds from the end of your last play to this snap (whole seconds; -1 on the first play of a drive). v93+. |
+| `tackler` | 0 | In `on juke`: the defender who was closing on your ball carrier. v93+. |
+| `juke_ready` | 1 | juke_ready(player): arm the JUKE prompt for him this play. When a defender closes within the Tune tab's reach, a JUKE button shows for a moment; a tap runs `on juke`. One per play. v93+. |
 | `thrown` | 0 | True while your pass is in the air. |
 | `yard` | 1 | yard(n): n yards in field units (1 yard is about 20.5). |
 | `endzone_x` | 1 | endzone_x(n): x of a spot n yards into the end zone you are attacking. |

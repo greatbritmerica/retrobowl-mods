@@ -54,6 +54,8 @@ typedef enum {
     T_OC_FADE,
     T_OC_COUNTER,
     T_OC_KEEP_PCT,
+    T_JUKE_REACH,
+    T_JUKE_WINDOW,
     T_COUNT
 } TuneId;
 

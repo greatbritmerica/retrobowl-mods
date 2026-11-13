@@ -32,6 +32,9 @@
     ['state', 0, 0, "The ball's state number (3 = in the air, 5 = someone has it)."],
     ['since_snap', 0, 0, 'Seconds since the snap.'],
     ['thrown', 0, 0, 'True while your pass is in the air.'],
+    ['tempo', 0, 0, 'Seconds from the end of your last play to this snap (whole seconds; -1 on the first play of a drive).'],
+    ['tackler', 0, 0, 'In on juke: the defender who was closing on your ball carrier.'],
+    ['juke_ready', 1, 1, 'juke_ready(player): arm the JUKE prompt for him this play; a tap in time runs on juke.'],
     ['yard', 1, 1, 'yard(n): n yards in field units (1 yard is about 20.5).'],
     ['endzone_x', 1, 1, 'endzone_x(n): x of a spot n yards into the end zone you are attacking.'],
     ['random', 2, 2, 'random(a, b): a random number between a and b.'],
@@ -65,7 +68,8 @@
   var EVENTS = [['presnap', 'Before the snap, once a play.'], ['button', 'on button "Label": when that pre-snap button is pressed.'],
     ['snap', 'The moment the play starts.'], ['release', 'The instant the ball leaves your hand (carry() works here).'],
     ['frame', 'Every frame of your play, from the snap until it ends (60 a second).'], ['throw', 'Just after a pass is out and its landing spot is known.'],
-    ['catch', ''], ['incomplete', ''], ['intercepted', ''], ['sack', ''], ['touchdown', ''], ['play_end', 'After every run or pass play.']];
+    ['catch', ''], ['incomplete', ''], ['intercepted', ''], ['sack', ''], ['touchdown', ''], ['play_end', 'After every run or pass play.'],
+    ['drive_end', 'Your drive is over: you lost the ball (score, punt, turnover) or the half ended.'], ['juke', 'You tapped JUKE in time (juke_ready armed it).']];
   var KW = ['on', 'end', 'if', 'elif', 'else', 'for', 'in', 'repeat', 'stop', 'and', 'or', 'not', 'true', 'false', 'nil'];
 
   function check(src) {
