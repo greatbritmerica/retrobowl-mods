@@ -418,6 +418,7 @@ void hook_player_draw(CInstance *self, CInstance *other) {
 }
 
 void hook_ball_draw(CInstance *self, CInstance *other) {
+    if (rb_off_hide_ball_draw()) return;                           // no aim line on a super throw
     if (rb_cam3d_active() && !rb_cam3d_in_gui_pass) return;
     ORIG_EV(ball_draw)(self, other);
 }

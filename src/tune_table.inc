@@ -47,6 +47,7 @@ const TuneDef RB_TUNE[T_COUNT] = {
     { "hail_defenders", 1.0, 0.0, 4.0 },
     { "super_pace", 12.0, 6.0, 24.0 },
     { "super_catch_h", 20.0, 0.0, 50.0 },
+    { "super_hide_aim", 1.0, 0.0, 1.0 },
     { "super_hide_sprite", -1.0, -1.0, 5000.0 },
     { "super_tap_reach", 90.0, 30.0, 200.0 },
     { "oc_on", 1.0, 0.0, 1.0 },
@@ -54,6 +55,6 @@ const TuneDef RB_TUNE[T_COUNT] = {
     { "oc_fade", 0.9, 0.5, 1.0 },
     { "oc_counter", 1.0, 0.0, 2.0 },
     { "oc_keep_pct", 0.15, 0.0, 1.0 },
-    { "juke_reach", 2.5, 1.0, 5.0 },
-    { "juke_window", 0.6, 0.2, 1.5 },
+    { "juke_reach", 4.0, 1.0, 8.0 },
+    { "juke_window", 1.5, 0.2, 3.0 },
 };

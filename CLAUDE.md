@@ -28,7 +28,7 @@ Claude can't run the game, so every change is tested by the user on the phone.
 ## Facts that explain most surprises
 - `on catch / incomplete / intercepted / touchdown / play_end` and `landing_x()/landing_y()` come from the
   Extreme defense code: Extreme difficulty only. `play_end` doesn't run after a sack.
-- At most 3 pre-snap buttons; rules add theirs first (the Hail Mary at the end of a half).
+- At most 7 pre-snap buttons from rules and scripts (3 before v96); rules add theirs first (the Hail Mary at the end of a half).
 - `route()` errors when the route doesn't change, and `route_slant_fake` crashes the game.
 - `speed()` multiplies acceleration each call: call it once per play, not every frame.
 - No game value tells players apart (`id`, `player_id`, `uid`, `number`, `slot` all read 0); only `qb()`

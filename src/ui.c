@@ -120,8 +120,8 @@ void rb_ui_panel_close(int pid) {
 void rb_ui_panel(int pid, int side, double width, const char *title, const char *message,
                  const char **buttons, int n, void (*cb)(int)) {
     if (pid < 0 || pid >= RB_UI_PANELS) return;
-    if (n > 7) n = 7;
-    struct { char t[96], m[520], b[7][40]; int n; } c;
+    if (n > 10) n = 10;
+    struct { char t[96], m[520], b[10][40]; int n; } c;
     memset(&c, 0, sizeof c);
     snprintf(c.t, sizeof c.t, "%s", title ? title : "");
     snprintf(c.m, sizeof c.m, "%s", message ? message : "");
@@ -137,7 +137,12 @@ void rb_ui_panel(int pid, int side, double width, const char *title, const char 
         RbInsets in = MSG(RbInsets)(win, S("safeAreaInsets"));
         double W = width, bh = 38, gap = 6, pad = 10;
         double th = c.t[0] ? 20 : 0, mh = c.m[0] ? (W > 150 ? 104 : 60) : 0;
-        double H = pad + th + (mh ? mh + 4 : 0) + c.n * (bh + gap) + pad - gap;
+        double fixed = 2 * pad - gap + th + (mh ? mh + 4 : 0);
+        int cols = fixed + c.n * (bh + gap) > wb.h - in.top - in.bottom - 12 ? 2 : 1;   // too tall for one column: two
+        int rows = (c.n + cols - 1) / cols;
+        W = cols * width - (cols - 1) * pad;
+        double bw = (W - 2 * pad - (cols - 1) * gap) / cols;
+        double H = pad + th + (mh ? mh + 4 : 0) + rows * (bh + gap) + pad - gap;
         int right = side & 1, bottom = side & 2;                // 0 left, 1 right, 2 left-bottom, 3 right-bottom
         double x = right ? wb.w - in.right - 6 - W : in.left + 6;
         double y = bottom ? wb.h - in.bottom - 8 - H : (wb.h - H) / 2;
@@ -156,12 +161,11 @@ void rb_ui_panel(int pid, int side, double width, const char *title, const char 
                              cb(idx);
                          });
             id btn = MSG(id, long, id)(C("UIButton"), S("buttonWithType:primaryAction:"), 1, act);
-            MSG(void, RbRect)(btn, S("setFrame:"), (RbRect){ pad, cy, W - 2 * pad, bh });
+            MSG(void, RbRect)(btn, S("setFrame:"), (RbRect){ pad + (i % cols) * (bw + gap), cy + (i / cols) * (bh + gap), bw, bh });
             MSG(void, id)(btn, S("setBackgroundColor:"), MSG(id, double, double)(C("UIColor"), S("colorWithWhite:alpha:"), 1.0, 0.16));
             MSG(void, id, unsigned long)(btn, S("setTitleColor:forState:"), MSG(id)(C("UIColor"), S("whiteColor")), 0);
             MSG(void, double)(MSG(id)(btn, S("layer")), S("setCornerRadius:"), 8.0);
             MSG(void, id)(panel, S("addSubview:"), btn);
-            cy += bh + gap;
         }
         MSG(void, id)(win, S("addSubview:"), panel);
         g_panel[pid] = panel;

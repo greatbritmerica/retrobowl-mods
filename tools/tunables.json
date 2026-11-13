@@ -499,8 +499,19 @@
  },
  {
   "group": "Super throw",
+  "key": "super_hide_aim",
+  "label": "Hide the aim line",
+  "def": 1,
+  "min": 0,
+  "max": 1,
+  "step": 1,
+  "pct": false,
+  "help": "1 = while you aim a super throw, the ball's own drawing (where the aim line comes from) is skipped. 0 = show it."
+ },
+ {
+  "group": "Super throw",
   "key": "super_hide_sprite",
-  "label": "Hide the aim line (sprite)",
+  "label": "Hide a sprite while aiming",
   "def": -1,
   "min": -1,
   "max": 5000,
@@ -577,23 +588,23 @@
  {
   "group": "Minute drill",
   "key": "juke_reach",
-  "label": "Juke prompt distance",
-  "def": 2.5,
+  "label": "Juke reach",
+  "def": 4,
   "min": 1,
-  "max": 5,
+  "max": 8,
   "step": 0.5,
   "pct": false,
-  "help": "How close a tackler gets, in yards, before the JUKE button shows."
+  "help": "When you tap JUKE, the nearest defender within this many yards of your ball carrier gets shaken off."
  },
  {
   "group": "Minute drill",
   "key": "juke_window",
   "label": "Juke tap window",
-  "def": 0.6,
+  "def": 1.5,
   "min": 0.2,
-  "max": 1.5,
+  "max": 3,
   "step": 0.1,
   "pct": false,
-  "help": "Seconds the JUKE button stays up for your tap."
+  "help": "Seconds the JUKE button stays up after the catch."
  }
 ]

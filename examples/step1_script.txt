@@ -6,8 +6,7 @@
 # Everything this file does is logged in rbmod.log on lines starting with "s1:".
 # Play on EXTREME difficulty: the meter and injuries use events the mod only
 # sends on Extreme. The screen pass and stop-and-go work on any difficulty.
-# The game shows at most 3 buttons before a snap. When the Hail Mary button is
-# up (end of a half), one of these may not appear.
+# Up to 7 buttons show before a snap (mod build v96; 3 before), Hail Mary first.
 
 # ============================================================
 # 1. SUPER BULLET THROW
@@ -195,7 +194,7 @@ end
 # md_window seconds of the last play ending and that play is on tempo:
 #  - the defense isn't set: every defender reacts slowly for the first moment
 #  - a quick, short catch leaves the nearest defenders a step slow
-#  - any catch past md_juke_yards gets a JUKE button when a tackler closes: tap it to shake him
+#  - any catch past md_juke_yards gets a JUKE button right at the catch: tap it to shake the nearest defender
 #  - on a handoff, your receivers go block the nearest defenders
 # A slow snap keeps the mode on but earns nothing that play.
 # (The catch rewards use catch events, so they work on Extreme only.)
@@ -488,4 +487,23 @@ on frame
       end
     end
   end
+end
+
+# ============================================================
+# 6. FIELD GOAL ANY TIME (needs mod build v96 for the button to fit)
+# Tap "Field goal" before the snap to kick one on any down. It runs the
+# game's own "yes" answer to its field goal offer, so the kick plays as usual.
+# ============================================================
+
+on presnap
+  # --- Field goal: change these ---
+  fg_on = 1              # 1 = a "Field goal" button before every snap, 0 = off
+  if fg_on
+    button("Field goal")
+  end
+end
+
+on button "Field goal"
+  log("s1: field goal called on down", game("down"))
+  call("btn_response_fg_yes")
 end

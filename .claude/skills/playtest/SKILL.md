@@ -27,5 +27,5 @@ session ever played (several MB): only look at the part after the last script lo
    approves changes first.
 
 Known facts that explain most surprises (see CLAUDE.md): catch / incomplete / intercepted / touchdown /
-play_end events and landing_x() only happen on Extreme; play_end does not run after a sack; at most 3
-pre-snap buttons show.
+play_end events and landing_x() only happen on Extreme; play_end does not run after a sack; at most 7
+rule/script buttons show before the snap (3 before v96).

@@ -117,7 +117,7 @@ void rb_tune_load(void) {
 #define MAXC 6
 #define MAXA 8
 #define MAXV 32
-#define MAXB 3
+#define MAXB 7
 typedef struct { char var[40]; int op; double val; } Cond;                 // op: 0 = 1 != 2 < 3 <= 4 > 5 >=
 typedef struct { char type[16]; char a[40]; char op; double v; int keep; char text[72]; } Act;
 typedef struct { char name[40], ev[16], arg[40]; Cond c[MAXC]; int nc; Act a[MAXA]; int na; } Rule;
