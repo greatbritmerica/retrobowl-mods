@@ -123,9 +123,12 @@ on snap
     scr_air = 0
     scr_done = 0
     scr_ready = 1
-    # the side with more room
+    # his own side of the QB (crossing behind the QB runs him through the rush);
+    # lined up straight behind the QB: the side with more room
     scr_dy = 1
-    if back().y - field_top() > field_bottom() - back().y
+    if qb() != nil and back().y < qb().y - 5
+      scr_dy = -1
+    elif (qb() == nil or back().y <= qb().y + 5) and back().y - field_top() > field_bottom() - back().y
       scr_dy = -1
     end
     scr_bx = los_x() - fwd() * yard(screen_behind)

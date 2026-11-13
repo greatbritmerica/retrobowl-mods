@@ -290,12 +290,8 @@ static double oc_rnd(void) { return arc4random_uniform(1000000) / 1000000.0; }
 static void oc_path(char *b, int n) { const char *h = getenv("HOME"); snprintf(b, n, "%s/Documents/rbmod_ocbrain.txt", h ? h : "."); }
 static void oc_save_file(void) { char p[512]; oc_path(p, sizeof p); FILE *f = fopen(p, "w"); if (!f) return; oc_save(&g_oc, f); fclose(f); }
 static const char *OC_POS[3] = { "top", "mid", "low" };
-static const char *OC_WHO[3] = { "top receiver", "middle receiver", "bottom receiver" };   // what the player sees
-static const char *ROUTE_SAYS[NROUTES] = { "stops at 5 yds, turns back", "5 yds, then cuts in at an angle", "9 yds, then cuts straight across",
-                                           "11 yds, then turns back", "9 yds, then angles deep inside", "9 yds, then angles deep outside" };
 static const char *OC_SIT[3] = { "short", "medium", "long" };
 static const char *OC_WHY[5] = { "works", "unseen", "surprise", "keep", "new" };
-static const char *OC_DEPTH[3] = { "short", "mid", "deep" }, *OC_SIDE[3] = { "left", "middle", "right" };   // dbrain.c's zone words
 
 static void oc_call(void) {
     oc_table_reset(&g_oct);
@@ -318,7 +314,7 @@ static void oc_call(void) {
     for (int z = 0; z < 9; z++) c.fam[z] = rb_dbrain_familiarity(z);
     c.surprise = T(T_OC_SURPRISE); c.keep = T(T_OC_KEEP_PCT); c.counter = T(T_OC_COUNTER);
     g_oc_sit = oc_situation(rb_rctx.togo);
-    int idx[6], n = 0, used[7] = {0}, noted = 0; char note[128] = "";
+    int idx[6], n = 0, used[7] = {0};
     for (int i = 0; i < O.nrcv; i++) if (O.rcv[i] && O.rcv[i] != O.rb) idx[n++] = i;   // top to bottom
     for (int k = 0; k < n; k++) {
         CInstance *r = O.rcv[idx[k]];
@@ -335,18 +331,8 @@ static void oc_call(void) {
         oc_table_set(&g_oct, r, route, pos);
         rb_log("ocbrain: call %s %s zone %d (%s) vanilla path %g", OC_POS[pos], route == OC_KEEP ? "keep" : ROUTES[route].name,
                oc_zone(route, side), OC_WHY[why], vanilla);
-        if (!noted && why != OC_WHY_SURPRISE) {
-            char reason[56];
-            if (why == OC_WHY_WORKS) snprintf(reason, sizeof reason, "Worked %.0f of %.0f times, %s yardage", g_oc.ok[route][pos][g_oc_sit], g_oc.att[route][pos][g_oc_sit], OC_SIT[g_oc_sit]);
-            else if (why == OC_WHY_UNSEEN && oc_zone(route, side) >= 0) { int z = oc_zone(route, side); snprintf(reason, sizeof reason, "They rarely cover %s %s", OC_DEPTH[z / 3], OC_SIDE[z % 3]); }
-            else snprintf(reason, sizeof reason, "%s", why == OC_WHY_KEEP ? "Sticking with the playbook" : "Trying something new");
-            if (route == OC_KEEP) snprintf(note, sizeof note, "OC: playbook route for the %s\n%s", OC_WHO[pos], reason);
-            else snprintf(note, sizeof note, "OC: %s runs a %s\n(%s)\n%s", OC_WHO[pos], ROUTES[route].name, ROUTE_SAYS[route], reason);
-            noted = 1;
-        }
     }
-    if (!noted && n) snprintf(note, sizeof note, "OC: mixing it up this play");
-    if (n) snprintf(O.note, sizeof O.note, "%s", note);   // after the loop: apply_route writes O.note too
+    if (n) O.note[0] = 0;                              // no coordinator text: its routes show on the field (apply_route writes O.note)
 }
 
 void rb_off_oc_lesson(CInstance *rcv, int ok, double yds) {
