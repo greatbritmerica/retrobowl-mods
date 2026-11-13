@@ -33,13 +33,18 @@ int oc_pick(const OcBrain *b, int pos, int side, int sit, const OcCtx *c, const 
         *why = OC_WHY_SURPRISE;
         int k = (int)(rnd() * n); return allowed[k < n ? k : n - 1];
     }
-    int best = allowed[0]; double bs = -1e9;
+    int best = allowed[0]; double bs = -1e9, mean_pen = 0, pen[6], best_pen = 0;
     for (int i = 0; i < n; i++) {
         int r = allowed[i], z = oc_zone(r, side);
-        double s = (b->ok[r][pos][sit] + 1) / (b->att[r][pos][sit] + 2) - 0.5 * c->counter * (z >= 0 ? c->fam[z] : 0);
-        if (s > bs) { bs = s; best = r; }
+        pen[i] = 0.5 * c->counter * (z >= 0 ? c->fam[z] : 0);
+        mean_pen += pen[i] / n;
+        double s = (b->ok[r][pos][sit] + 1) / (b->att[r][pos][sit] + 2) - pen[i];
+        if (s > bs) { bs = s; best = r; best_pen = pen[i]; }
     }
-    *why = b->att[best][pos][sit] >= 2 ? OC_WHY_WORKS : OC_WHY_UNSEEN;
+    // the reason is whichever term lifted the winner most: its own record, or the defense not knowing its zone
+    double gain_ok = (b->ok[best][pos][sit] + 1) / (b->att[best][pos][sit] + 2) - 0.5, gain_fam = mean_pen - best_pen;
+    if (b->att[best][pos][sit] >= 2 && gain_ok > 0 && gain_ok >= gain_fam) *why = OC_WHY_WORKS;
+    else *why = gain_fam > 1e-9 ? OC_WHY_UNSEEN : OC_WHY_NEW;
     return best;
 }
 
@@ -63,10 +68,13 @@ int oc_save(const OcBrain *b, FILE *f) {
 int oc_load(OcBrain *b, FILE *f) {
     char line[128];
     memset(b, 0, sizeof *b);
-    if (!f || !fgets(line, sizeof line, f) || strncmp(line, "ocbrain 1", 9)) return 0;
+    if (!f || !fgets(line, sizeof line, f) || strncmp(line, "ocbrain 1", 9) || (line[9] && line[9] != '\n' && line[9] != '\r')) return 0;
     OcBrain t;
-    for (int r = 0; r < 7; r++) for (int p = 0; p < 3; p++) for (int s = 0; s < 3; s++)
-        if (!fgets(line, sizeof line, f) || sscanf(line, "%lf %lf %lf", &t.att[r][p][s], &t.ok[r][p][s], &t.yds[r][p][s]) != 3) return 0;
+    for (int r = 0; r < 7; r++) for (int p = 0; p < 3; p++) for (int s = 0; s < 3; s++) {
+        double *a = &t.att[r][p][s], *o = &t.ok[r][p][s], *y = &t.yds[r][p][s];
+        if (!fgets(line, sizeof line, f) || sscanf(line, "%lf %lf %lf", a, o, y) != 3) return 0;
+        if (!(*a >= 0 && *a < 1e9 && *o >= 0 && *o <= *a && *y > -1e9 && *y < 1e9)) return 0;   // also rejects nan
+    }
     *b = t;
     return 1;
 }

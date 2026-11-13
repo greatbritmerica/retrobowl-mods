@@ -5,7 +5,7 @@
 
 enum { OC_NROUTES = 7, OC_KEEP = 6 };                  // 0-5 = ROUTES[] in offtools.c, 6 = keep the game's route
 enum { OC_TOP, OC_MID, OC_BOT };
-enum { OC_WHY_WORKS, OC_WHY_UNSEEN, OC_WHY_SURPRISE, OC_WHY_KEEP };
+enum { OC_WHY_WORKS, OC_WHY_UNSEEN, OC_WHY_SURPRISE, OC_WHY_KEEP, OC_WHY_NEW };   // UNSEEN: the defense doesn't know that zone
 
 typedef struct { double att[7][3][3], ok[7][3][3], yds[7][3][3]; } OcBrain;     // [route][position][situation]
 typedef struct { double fam[9]; double surprise, keep, counter; } OcCtx;       // fam: dbrain zone familiarity 0-1

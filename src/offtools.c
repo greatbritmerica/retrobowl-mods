@@ -278,7 +278,8 @@ static void oc_path(char *b, int n) { const char *h = getenv("HOME"); snprintf(b
 static void oc_save_file(void) { char p[512]; oc_path(p, sizeof p); FILE *f = fopen(p, "w"); if (!f) return; oc_save(&g_oc, f); fclose(f); }
 static const char *OC_POS[3] = { "top", "mid", "low" };
 static const char *OC_SIT[3] = { "short", "medium", "long" };
-static const char *OC_WHY[4] = { "works", "unseen", "surprise", "keep" };
+static const char *OC_WHY[5] = { "works", "unseen", "surprise", "keep", "new" };
+static const char *OC_DEPTH[3] = { "short", "mid", "deep" }, *OC_SIDE[3] = { "left", "middle", "right" };   // dbrain.c's zone words
 
 static void oc_call(void) {
     oc_table_reset(&g_oct);
@@ -318,7 +319,8 @@ static void oc_call(void) {
         if (!noted && why != OC_WHY_SURPRISE) {
             char reason[48];
             if (why == OC_WHY_WORKS) snprintf(reason, sizeof reason, "%.0f of %.0f worked on %s", g_oc.ok[route][pos][g_oc_sit], g_oc.att[route][pos][g_oc_sit], OC_SIT[g_oc_sit]);
-            else snprintf(reason, sizeof reason, "%s", why == OC_WHY_KEEP ? "the book call" : "they haven't seen it");
+            else if (why == OC_WHY_UNSEEN && oc_zone(route, side) >= 0) { int z = oc_zone(route, side); snprintf(reason, sizeof reason, "their %s %s is unfamiliar", OC_DEPTH[z / 3], OC_SIDE[z % 3]); }
+            else snprintf(reason, sizeof reason, "%s", why == OC_WHY_KEEP ? "the book call" : "trying it out");
             snprintf(note, sizeof note, "OC: %s %s - %s", route == OC_KEEP ? "Keep" : ROUTES[route].name, OC_POS[pos], reason);
             noted = 1;
         }
@@ -1164,7 +1166,7 @@ void rb_off_report(char *buf, size_t n) {
 }
 
 // The match objects are being destroyed (every play is rebuilt from scratch): drop every pointer.
-void rb_off_forget(void) { script_play_reset(); O.ball = 0; O.qb = O.rb = 0; O.nol = O.ndf = O.nrcv = 0; O.t_snap = 0; O.prot = 0; }
+void rb_off_forget(void) { script_play_reset(); oc_table_reset(&g_oct); O.ball = 0; O.qb = O.rb = 0; O.nol = O.ndf = O.nrcv = 0; O.t_snap = 0; O.prot = 0; }
 // The other team is running its offense: your back is fresh again for your next drive.
 void rb_off_cpu_drive(void) {
     oc_table_reset(&g_oct);

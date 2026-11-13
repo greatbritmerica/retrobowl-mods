@@ -37,6 +37,19 @@ int main(void) {
     assert(oc_pick(&b, OC_TOP, 0, 1, &c, NONE, rnd, &why) == 1 && why == OC_WHY_UNSEEN);
     c = ctx0();
 
+    // why_new: no data and no defense memory -> just trying it
+    memset(&b, 0, sizeof b);
+    oc_pick(&b, OC_TOP, 0, 1, &c, NONE, rnd, &why);
+    assert(why == OC_WHY_NEW);
+
+    // why_follows_familiarity: a route that went 0 for 2 but is the only one the defense doesn't know
+    memset(&b, 0, sizeof b);
+    b.att[1][OC_TOP][1] = 2;
+    for (int z = 0; z < 9; z++) c.fam[z] = 1;
+    c.fam[oc_zone(1, 0)] = 0;
+    assert(oc_pick(&b, OC_TOP, 0, 1, &c, NONE, rnd, &why) == 1 && why == OC_WHY_UNSEEN);
+    c = ctx0();
+
     // surprise_rate
     c.surprise = 0.2; int n = 0;
     for (int i = 0; i < 10000; i++) { oc_pick(&b, OC_MID, 1, 1, &c, NONE, rnd, &why); n += why == OC_WHY_SURPRISE; }
@@ -82,6 +95,12 @@ int main(void) {
     f = tmpfile(); fputs("junk\n", f); rewind(f);
     assert(!oc_load(&b2, f)); fclose(f);
     for (int i = 0; i < 7; i++) assert(b2.att[i][0][0] == 0 && b2.ok[i][2][2] == 0);
+    f = tmpfile(); fputs("ocbrain 10\n", f); for (int i = 0; i < 63; i++) fputs("0 0 0\n", f); rewind(f);   // other version
+    assert(!oc_load(&b2, f)); fclose(f);
+    f = tmpfile(); fputs("ocbrain 1\n-2 0 0\n", f); for (int i = 1; i < 63; i++) fputs("0 0 0\n", f); rewind(f);   // negative count
+    assert(!oc_load(&b2, f)); fclose(f);
+    f = tmpfile(); fputs("ocbrain 1\nnan 0 0\n", f); for (int i = 1; i < 63; i++) fputs("0 0 0\n", f); rewind(f);  // not a number
+    assert(!oc_load(&b2, f)); fclose(f);
     f = tmpfile(); fputs("ocbrain 1\n1 1 1\n", f); rewind(f);   // cut short
     assert(!oc_load(&b2, f)); fclose(f);
     assert(b2.att[0][0][0] == 0);
