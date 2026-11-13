@@ -472,6 +472,7 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
     double st = rb_get_inst_real(ball, SLOT_STATE);
     if (ball != O.ball) {                                         // new play
         if (O.jk_shown) rb_ui_panel_close(RB_PANEL_JUKE);
+        g_ev_juke = 0;                                            // a late JUKE tap doesn't carry into this play
         memset(&O, 0, sizeof O);
         script_play_reset();
         O.ball = ball; O.prev_st = O.st = st;
@@ -555,6 +556,7 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
             rb_log("offtools: situation - quarter %.0f, %.0f s left, down %.0f & %.1f, yard line %.1f (%.0f to the goal), score %+.0f",
                    rb_rctx.quarter, rb_rctx.clock, rb_rctx.down, rb_rctx.togo, g_pre.scrim, rb_rctx.goal, rb_rctx.score_diff);
             if (g_md_q == 2 && rb_rctx.quarter >= 3) rb_off_drive_end("half");   // before presnap rules
+            if (g_md_q && rb_rctx.quarter < g_md_q) { rb_off_drive_end("new game"); g_dead_time = 0; }   // the last game ended mid-drive
             g_md_q = rb_rctx.quarter; g_md_drive = 1;
             oc_call();                                            // before scripts and hot routes, so they win
             rb_rules_fire("presnap", 0);
