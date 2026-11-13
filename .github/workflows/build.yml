@@ -13,6 +13,8 @@ jobs:
         run: mkdir -p build && cc -o build/bullet_test tests/bullet_test.c src/bullet.c -lm && build/bullet_test
       - name: Test the coordinator brain
         run: mkdir -p build && cc -o build/ocbrain_test tests/ocbrain_test.c src/ocbrain.c -lm && build/ocbrain_test
+      - name: Test the juke closing check
+        run: mkdir -p build && cc -o build/juke_test tests/juke_test.c src/juke.c -lm && build/juke_test
       - name: Build libRBMod.dylib
         run: make
       - name: Inspect
