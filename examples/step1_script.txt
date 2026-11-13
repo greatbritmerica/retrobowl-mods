@@ -23,7 +23,7 @@ on presnap
   # --- Super throw: change these ---
   super_on = 1                # 1 = on, 0 = off
   meter_per_catch = 20        # meter gained per completion (100 = full)
-  meter_per_miss = 10         # meter lost per incompletion or interception
+  meter_per_miss = 0          # meter lost per incompletion or interception (0 = the meter only goes up until used)
   super_needs = 100           # meter needed for a super throw
   super_clear_defenders = 1   # 1 = the 2 defenders nearest the catch are pushed away from it
   if meter == nil
@@ -146,8 +146,9 @@ on frame
       if since_snap() < screen_slip
         # strength 0 = no push: he stands in and blocks
         steer(back(), back().x, back().y, 0)
-      elif not scr_air
+      else
         # full push until he's within a yard of the spot, then ease off so he settles there
+        # (also while the ball is in the air, or the game's route runs him away from it)
         steer(back(), scr_bx, scr_by, min(1, dist(back().x, back().y, scr_bx, scr_by) / yard(1)))
       end
     end
