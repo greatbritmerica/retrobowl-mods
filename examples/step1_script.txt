@@ -184,45 +184,140 @@ on frame
 end
 
 # ============================================================
-# 3. STOP-AND-GO
-# Receivers make a sharp fake cut toward the middle, then break straight downfield.
-# (The game's own slant-and-go route crashes the game, so the whole move is steered.)
+# 3. MINUTE DRILL (needs mod build v93)
+# Tap "Minute drill" to go up-tempo for the rest of this drive. Snap within
+# md_window seconds of the last play ending and that play is on tempo:
+#  - a quick, short catch leaves the nearest defenders a step slow
+#  - a longer catch gets a JUKE button when a tackler closes: tap it to shake him
+#  - on a handoff, your receivers go block the nearest defenders
+# A slow snap keeps the mode on but earns nothing that play.
+# (The catch rewards use catch events, so they work on Extreme only.)
 # ============================================================
 
 on presnap
-  # --- Stop and go: change these ---
-  sng_on = 1            # 1 = on, 0 = off
-  sng_fake_time = 0.6   # seconds of the fake cut before they break downfield
-  sng_fake_sharp = 1    # how sharp the fake cut is: 1 = 45 degrees, 2 = steeper, 0.5 = shallower
-  if sng_on
-    button("Stop and go")
+  # --- Minute drill: change these ---
+  md_on = 1             # 1 = on, 0 = off
+  md_window = 10        # seconds after a play ends you have to snap to stay on tempo
+  md_quick = 1.5        # a throw out within this many seconds of the snap counts as quick
+  md_short = 5          # a catch within this many yards past the line counts as short
+  md_slow_n = 2         # how many defenders a quick short catch slows
+  md_slow_pct = 60      # how fast slowed and juked defenders move, in percent
+  md_juke_yards = 5     # catches longer than this get the JUKE button
+  md_juke_push = 3      # yards a juked tackler is pushed off
+  md_push_time = 0.4    # seconds the juked tackler is pushed
+  md_block_pct = 70     # a run-blocked defender's speed, in percent (one shared by two receivers can end up slower)
+  md_block_time = 4     # seconds after the snap your receivers keep blocking on a run
+  if md_on
+    if md_active
+      if md_was_slow
+        msg("Last snap too slow. Minute drill: snap fast!")
+      else
+        msg("Minute drill: snap fast!")
+      end
+    else
+      button("Minute drill")
+    end
   end
 end
 
 on snap
-  if sng_on and pressed("Stop and go")
-    log("s1: stop and go")
+  md_ok = 0
+  md_was_slow = 0
+  md_throw_t = 99
+  md_push_until = 0
+  md_run = 0
+  if md_on and not md_active and pressed("Minute drill")
+    md_active = 1
+    md_ok = 1
+    log("s1: md on")
+  elif md_on and md_active
+    if tempo() >= 0 and tempo() <= md_window
+      md_ok = 1
+    else
+      md_was_slow = 1
+    end
   end
-end
-
-on frame
-  if sng_on and pressed("Stop and go") and not thrown()
-    mid = (field_top() + field_bottom()) / 2
-    for r in receivers()
-      # with Screen also on, leave the back to the screen
-      if not (scr_ready and r == back())
-        if since_snap() < sng_fake_time
-          dy = 1
-          if r.y > mid
-            dy = -1
-          end
-          steer(r, r.x + fwd() * yard(3), r.y + dy * yard(3) * sng_fake_sharp, 1)
-        else
-          steer(r, r.x + fwd() * yard(10), r.y, 1)
+  if md_ok and state() == 19
+    md_run = 1
+    # each receiver's nearest defender is slowed once (skip a repeat of the last one)
+    md_tk = nil
+    for r in sort_y(receivers())
+      if r != back()
+        p = item(nearest(defenders(), r.x, r.y, 1), 0)
+        if p != nil and p != md_tk
+          speed(p, md_block_pct)
+          md_tk = p
         end
       end
     end
   end
+  if md_active
+    log("s1: md snap tempo", tempo(), "on", md_ok, "run", md_run)
+  end
+end
+
+on throw
+  md_throw_t = since_snap()
+end
+
+on catch
+  if md_ok
+    tx = (ball().x - los_x()) * fwd() / yard(1)
+    if md_throw_t <= md_quick and tx <= md_short
+      for p in nearest(defenders(), ball().x, ball().y, md_slow_n)
+        speed(p, md_slow_pct)
+      end
+      log("s1: md quick catch", tx)
+    elif tx > md_juke_yards
+      p = item(nearest(offense(), ball().x, ball().y, 1), 0)
+      if p != nil
+        juke_ready(p)
+        log("s1: md juke armed", tx)
+      end
+    end
+  end
+end
+
+on juke
+  md_tk = tackler()
+  if md_tk != nil
+    md_push_until = since_snap() + md_push_time
+    speed(md_tk, md_slow_pct)
+    log("s1: md juke")
+  end
+end
+
+on frame
+  if md_push_until > 0 and since_snap() < md_push_until
+    # push the juked tackler straight away from your ball carrier (players are found again every block)
+    p = tackler()
+    if p != nil
+      ty = max(1, dist(p.x, p.y, ball().x, ball().y))
+      steer(p, p.x + (p.x - ball().x) / ty * yard(md_juke_push), p.y + (p.y - ball().y) / ty * yard(md_juke_push), 1)
+    end
+  end
+end
+
+on frame
+  if md_run and since_snap() < md_block_time
+    for r in receivers()
+      if r != back()
+        p = item(nearest(defenders(), r.x, r.y, 1), 0)
+        if p != nil
+          steer(r, p.x, p.y, 1)
+        end
+      end
+    end
+  end
+end
+
+on drive_end
+  if md_active
+    log("s1: md off")
+  end
+  md_active = 0
+  md_ok = 0
+  md_was_slow = 0
 end
 
 # ============================================================
@@ -320,14 +415,14 @@ end
 
 on presnap
   # --- Trace: change these ---
-  trace_mode = 1      # 0 = off, 1 = plays where you press Screen, Stop and go or Super throw, 2 = every play
+  trace_mode = 1      # 0 = off, 1 = plays where you press Screen, Minute drill or Super throw, 2 = every play
   trace_every = 10    # frames between snapshots (60 frames = 1 second)
   tr_f = 0
 end
 
 on snap
   tr_on = 0
-  if trace_mode == 2 or (trace_mode == 1 and (pressed("Screen") or pressed("Stop and go") or pressed("Super throw")))
+  if trace_mode == 2 or (trace_mode == 1 and (pressed("Screen") or pressed("Minute drill") or pressed("Super throw")))
     tr_on = 1
     log("s1: TS", los_x(), fwd(), field_top(), field_bottom(), down())
   end
