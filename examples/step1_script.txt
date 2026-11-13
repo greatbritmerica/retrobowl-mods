@@ -186,11 +186,12 @@ on frame
 end
 
 # ============================================================
-# 3. MINUTE DRILL (needs mod build v93)
+# 3. MINUTE DRILL (needs mod build v94)
 # Tap "Minute drill" to go up-tempo for the rest of this drive. Snap within
 # md_window seconds of the last play ending and that play is on tempo:
+#  - the defense isn't set: every defender reacts slowly for the first moment
 #  - a quick, short catch leaves the nearest defenders a step slow
-#  - a longer catch gets a JUKE button when a tackler closes: tap it to shake him
+#  - any catch past md_juke_yards gets a JUKE button when a tackler closes: tap it to shake him
 #  - on a handoff, your receivers go block the nearest defenders
 # A slow snap keeps the mode on but earns nothing that play.
 # (The catch rewards use catch events, so they work on Extreme only.)
@@ -209,6 +210,8 @@ on presnap
   md_push_time = 0.4    # seconds the juked tackler is pushed
   md_block_pct = 55     # a run-blocked defender's speed, in percent (one shared by two receivers can end up slower)
   md_block_time = 4     # seconds after the snap your receivers keep blocking on a run
+  md_daze_pct = 60      # on a tempo snap the defense isn't set: how fast every defender reacts at first, in percent
+  md_daze_time = 1      # seconds after a tempo snap before the defense is back to normal
   if md_on
     if md_active
       if md_was_slow
@@ -238,6 +241,14 @@ on snap
     else
       md_was_slow = 1
     end
+  end
+  md_dazed = 0
+  if md_ok and md_daze_pct > 0
+    # the defense isn't set yet: everyone reacts slowly for a moment
+    for p in defenders()
+      speed(p, md_daze_pct)
+    end
+    md_dazed = 1
   end
   if md_ok and state() == 19
     md_run = 1
@@ -270,7 +281,8 @@ on catch
         speed(p, md_slow_pct)
       end
       log("s1: md quick catch", tx)
-    elif tx > md_juke_yards
+    end
+    if tx > md_juke_yards
       p = item(nearest(offense(), ball().x, ball().y, 1), 0)
       if p != nil
         juke_ready(p)
@@ -297,6 +309,16 @@ on frame
       ty = max(1, dist(p.x, p.y, ball().x, ball().y))
       steer(p, p.x + (p.x - ball().x) / ty * yard(md_juke_push), p.y + (p.y - ball().y) / ty * yard(md_juke_push), 1)
     end
+  end
+end
+
+on frame
+  if md_dazed and since_snap() >= md_daze_time
+    # the defense has set: back to normal speed (undo the slowdown, keep any other)
+    for p in defenders()
+      speed(p, 10000 / md_daze_pct)
+    end
+    md_dazed = 0
   end
 end
 

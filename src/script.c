@@ -27,7 +27,7 @@
 #define MAXTOK    6000
 #define MAXNODE   4000
 #define MAXH      48
-#define MAXVAR    64
+#define MAXVAR    128
 #define POOL      24000
 #define RPOOL     4096
 #define MAXLIST   48

@@ -48,6 +48,7 @@ typedef enum {
     T_HAIL_DEFENDERS,
     T_SUPER_PACE,
     T_SUPER_CATCH_H,
+    T_SUPER_HIDE_SPRITE,
     T_SUPER_TAP_REACH,
     T_OC_ON,
     T_OC_SURPRISE,

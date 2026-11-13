@@ -499,6 +499,17 @@
  },
  {
   "group": "Super throw",
+  "key": "super_hide_sprite",
+  "label": "Hide the aim line (sprite)",
+  "def": -1,
+  "min": -1,
+  "max": 5000,
+  "step": 1,
+  "pct": false,
+  "help": "While aiming a super throw, this sprite isn't drawn. -1 = draw everything. Set from a playtest log (offtools: sprites drawn while aiming)."
+ },
+ {
+  "group": "Super throw",
   "key": "super_tap_reach",
   "label": "How close the tap must be",
   "def": 90,
@@ -523,7 +534,7 @@
   "group": "Coordinator",
   "key": "oc_surprise",
   "label": "Surprise calls",
-  "def": 0.2,
+  "def": 0.15,
   "min": 0,
   "max": 1,
   "step": 0.05,

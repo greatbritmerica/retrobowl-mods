@@ -58,12 +58,12 @@ static struct {
     int pumps; unsigned pump_until; double plx, ply;
     int presnap_shown, pump_shown, offense_snap, scrambled;
     CInstance *rcv[6]; double rcv_y[6]; int nrcv, pick;
-    char note[96];
+    char note[128];
     CInstance *df[16]; double dfx[16]; int ndf, rusher[16];
     CInstance *ol[8]; double ol_d[8], front, rb_d; int nol;                                    // interior linemen (protection calls)
     int fingers; int rules_fired, nhot, push_frames; int hail, hail_set, hail_over, nhdf; CInstance *hdf[10]; double hail_goal, hail_tx, hail_lo, hail_hi, hdf_y[10]; int sneak, kneel, sneak_hold; unsigned sneak_t, t_run; double push; int legs_done; double slide_read; int prot, prot_frames, prot_noted;                            // this play's protection, how long it held someone up
     CInstance *sup; int sup_i, sup_log; unsigned sup_t; double sup_px[6], sup_py[6], sup_vx[6], sup_vy[6];   // super throw: tapped receiver, receiver motion
-    CInstance *jk, *jk_tk; int jk_shown, jk_done; unsigned jk_t; double jk_cx, jk_cy, jk_px[16], jk_py[16];   // minute drill juke: carrier, tackler, prompt
+    CInstance *jk, *jk_tk; int sd_logged, sup_live, sup_skip_logged, jk_shown, jk_done; unsigned jk_t; double jk_cx, jk_cy, jk_px[16], jk_py[16];   // minute drill juke: carrier, tackler, prompt
 } O;
 
 // Protection call. It stays as set from play to play (shown on the button) until changed.
@@ -284,11 +284,15 @@ static int apply_route(CInstance *rcv, const char *route, const char *name, cons
 // Before your snap on Extreme it rewrites the receivers' routes from what worked, away from the zones
 // the CPU defense knows, and learns from each pass (rb_off_oc_lesson, called by dbrain.c).
 extern CInstance *rb_game_controller;                   // cpuqb.c: a new one = a new game
-static OcBrain g_oc; static OcTable g_oct; static int g_oc_loaded, g_oc_sit; static CInstance *g_oc_game, *g_oc_off_game;
+static OcBrain g_oc; static OcTable g_oct; static int g_oc_loaded, g_oc_sit, g_oc_last[3] = { -1, -1, -1 };   // g_oc_last: last play's call per position
+static CInstance *g_oc_game, *g_oc_off_game;
 static double oc_rnd(void) { return arc4random_uniform(1000000) / 1000000.0; }
 static void oc_path(char *b, int n) { const char *h = getenv("HOME"); snprintf(b, n, "%s/Documents/rbmod_ocbrain.txt", h ? h : "."); }
 static void oc_save_file(void) { char p[512]; oc_path(p, sizeof p); FILE *f = fopen(p, "w"); if (!f) return; oc_save(&g_oc, f); fclose(f); }
 static const char *OC_POS[3] = { "top", "mid", "low" };
+static const char *OC_WHO[3] = { "top receiver", "middle receiver", "bottom receiver" };   // what the player sees
+static const char *ROUTE_SAYS[NROUTES] = { "stops at 5 yds, turns back", "5 yds, then cuts in at an angle", "9 yds, then cuts straight across",
+                                           "11 yds, then turns back", "9 yds, then angles deep inside", "9 yds, then angles deep outside" };
 static const char *OC_SIT[3] = { "short", "medium", "long" };
 static const char *OC_WHY[5] = { "works", "unseen", "surprise", "keep", "new" };
 static const char *OC_DEPTH[3] = { "short", "mid", "deep" }, *OC_SIDE[3] = { "left", "middle", "right" };   // dbrain.c's zone words
@@ -314,30 +318,34 @@ static void oc_call(void) {
     for (int z = 0; z < 9; z++) c.fam[z] = rb_dbrain_familiarity(z);
     c.surprise = T(T_OC_SURPRISE); c.keep = T(T_OC_KEEP_PCT); c.counter = T(T_OC_COUNTER);
     g_oc_sit = oc_situation(rb_rctx.togo);
-    int idx[6], n = 0, used[7] = {0}, noted = 0; char note[96] = "";
+    int idx[6], n = 0, used[7] = {0}, noted = 0; char note[128] = "";
     for (int i = 0; i < O.nrcv; i++) if (O.rcv[i] && O.rcv[i] != O.rb) idx[n++] = i;   // top to bottom
     for (int k = 0; k < n; k++) {
         CInstance *r = O.rcv[idx[k]];
         int pos = k == 0 ? OC_TOP : k == n - 1 ? OC_BOT : OC_MID;
         double side_px = (O.rcv_y[idx[k]] - O.qby) * (O.fwd > 0 ? 1 : -1);          // as dbrain.c's zones
         int side = side_px < -60 ? 0 : side_px > 60 ? 2 : 1, why = 0;
-        int route = oc_pick(&g_oc, pos, side, g_oc_sit, &c, used, oc_rnd, &why);
+        int avoid[7]; memcpy(avoid, used, sizeof avoid);                            // no repeat of this spot's last call
+        if (g_oc_last[pos] >= 0 && g_oc_last[pos] < NROUTES) avoid[g_oc_last[pos]] = 1;
+        int route = oc_pick(&g_oc, pos, side, g_oc_sit, &c, avoid, oc_rnd, &why);
         double vanilla = rb_get_inst_real(r, SLOT_MY_ROUTE);
         if (route != OC_KEEP && !apply_route(r, ROUTES[route].route, ROUTES[route].name, OC_POS[pos])) { route = OC_KEEP; why = OC_WHY_KEEP; }
         used[route] = 1;
+        g_oc_last[pos] = route == OC_KEEP ? -1 : route;
         oc_table_set(&g_oct, r, route, pos);
         rb_log("ocbrain: call %s %s zone %d (%s) vanilla path %g", OC_POS[pos], route == OC_KEEP ? "keep" : ROUTES[route].name,
                oc_zone(route, side), OC_WHY[why], vanilla);
         if (!noted && why != OC_WHY_SURPRISE) {
-            char reason[48];
-            if (why == OC_WHY_WORKS) snprintf(reason, sizeof reason, "%.0f of %.0f worked on %s", g_oc.ok[route][pos][g_oc_sit], g_oc.att[route][pos][g_oc_sit], OC_SIT[g_oc_sit]);
-            else if (why == OC_WHY_UNSEEN && oc_zone(route, side) >= 0) { int z = oc_zone(route, side); snprintf(reason, sizeof reason, "their %s %s is unfamiliar", OC_DEPTH[z / 3], OC_SIDE[z % 3]); }
-            else snprintf(reason, sizeof reason, "%s", why == OC_WHY_KEEP ? "the book call" : "trying it out");
-            snprintf(note, sizeof note, "OC: %s %s - %s", route == OC_KEEP ? "Keep" : ROUTES[route].name, OC_POS[pos], reason);
+            char reason[56];
+            if (why == OC_WHY_WORKS) snprintf(reason, sizeof reason, "Worked %.0f of %.0f times, %s yardage", g_oc.ok[route][pos][g_oc_sit], g_oc.att[route][pos][g_oc_sit], OC_SIT[g_oc_sit]);
+            else if (why == OC_WHY_UNSEEN && oc_zone(route, side) >= 0) { int z = oc_zone(route, side); snprintf(reason, sizeof reason, "They rarely cover %s %s", OC_DEPTH[z / 3], OC_SIDE[z % 3]); }
+            else snprintf(reason, sizeof reason, "%s", why == OC_WHY_KEEP ? "Sticking with the playbook" : "Trying something new");
+            if (route == OC_KEEP) snprintf(note, sizeof note, "OC: playbook route for the %s\n%s", OC_WHO[pos], reason);
+            else snprintf(note, sizeof note, "OC: %s runs a %s\n(%s)\n%s", OC_WHO[pos], ROUTES[route].name, ROUTE_SAYS[route], reason);
             noted = 1;
         }
     }
-    if (!noted && n) snprintf(note, sizeof note, "OC: a curveball");
+    if (!noted && n) snprintf(note, sizeof note, "OC: mixing it up this play");
     if (n) snprintf(O.note, sizeof O.note, "%s", note);   // after the loop: apply_route writes O.note too
 }
 
@@ -404,6 +412,7 @@ void sh_juke_ready(void *p) {
 // shortcut: keyed to the button label "Super throw" from examples/step1_script.txt; a script function
 // to arm it would be cleaner if a second feature ever needs the tap.
 static int super_armed(void) { return sh_pressed("Super throw"); }
+static void spr_log_flush(void);
 static void super_track(void) {                                   // each receiver's motion, px per frame
     for (int i = 0; i < O.nrcv && i < 6; i++) {
         if (!O.rcv[i]) continue;
@@ -454,7 +463,8 @@ static void super_throw(CInstance *ball) {
     rb_set_inst_real(ball, SLOT_DIREC, atan2(b.dy, b.dx) * 57.29577951308232);             // screen degrees (y down)
     double gm = atan2(-b.dy, b.dx) * 57.29577951308232;                                     // GameMaker degrees (y up)
     rb_set_builtin_real(ball, SLOT_DIRECTION, gm < 0 ? gm + 360 : gm);
-    g_land = 1; g_land_x = b.lx; g_land_y = b.ly;                                           // landing_x()/_y() for the script
+    g_land = 1; g_land_x = b.lx; g_land_y = b.ly;
+    O.sup_live = 1;                                                                         // defenders can't touch it now                                           // landing_x()/_y() for the script
     O.sup_log = 4;
     rb_log("offtools: super throw at receiver %d -> %.0f,%.0f in %.0f frames (speed %.2f -> %.2f, lift %.2f, height %.0f, aim %.0f -> %.0f deg)",
            O.sup_i, b.lx, b.ly, b.frames, was_v, b.speed, b.zvel, h0, was_dir, atan2(b.dy, b.dx) * 57.3);
@@ -683,6 +693,7 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
     if (O.hail && !O.sup && O.prev_st == 2 && st == 3) hail_throw(ball);   // a super throw wins over the Hail Mary
     if (O.t_snap && !O.legs_done && st != 0) rb_script_fire("frame", 0);   // every frame of your play, from the snap
     juke_step();
+    spr_log_flush();
     if (O.hail && !O.hail_over && O.t_snap && (st == 5 || st == 4 || st == 6 || st == 7 || st == 8 || st == 9 || st == 11)) {
         if (!(st == 5 && O.prev_st != 3)) { O.hail_over = 1; rb_log("offtools: Hail Mary over (ball state %.0f)", st); }
     }
@@ -850,6 +861,35 @@ int rb_off_blocker_ignores_ball(CInstance *player) {
     double d = hypot(rb_get_builtin_real(O.ball, SLOT_X) - rb_get_builtin_real(O.qb, SLOT_X),
                      rb_get_builtin_real(O.ball, SLOT_Y) - rb_get_builtin_real(O.qb, SLOT_Y));
     return d < 70;
+}
+// ---- aim line on a super throw: the game draws it with sprites, but which one isn't known yet. The first
+// 2 super plays log the sprites drawn in one frame before aiming and one while aiming (the aim line is
+// in the second list only); the Super throw tunable "Hide the aim line" then skips that sprite while aiming.
+static long g_sd_spr[48]; static int g_sd_cnt[48], g_sd_n, g_sd_st, g_sd_plays;
+int rb_off_spr_draw(long sprite) {
+    if (!O.ball || (O.st != 1 && O.st != 2) || !super_armed()) return 0;
+    if (O.st == 2 && T(T_SUPER_HIDE_SPRITE) >= 0 && sprite == (long)T(T_SUPER_HIDE_SPRITE)) return 1;
+    if (g_sd_plays >= 2 || (O.sd_logged & (1 << (int)O.st))) return 0;
+    g_sd_st = (int)O.st;
+    for (int i = 0; i < g_sd_n; i++) if (g_sd_spr[i] == sprite) { g_sd_cnt[i]++; return 0; }
+    if (g_sd_n < 48) { g_sd_spr[g_sd_n] = sprite; g_sd_cnt[g_sd_n++] = 1; }
+    return 0;
+}
+static void spr_log_flush(void) {                     // once per step: the frame drawn since the last one
+    if (!g_sd_n) return;
+    char m[600]; int n = 0;
+    for (int i = 0; i < g_sd_n && n < (int)sizeof m - 24; i++) n += snprintf(m + n, sizeof m - n, " %ld:%d", g_sd_spr[i], g_sd_cnt[i]);
+    rb_log("offtools: sprites drawn %s (sprite:count)%s", g_sd_st == 2 ? "while aiming" : "before aiming", m);
+    O.sd_logged |= 1 << g_sd_st;
+    if (O.sd_logged == 6) g_sd_plays++;
+    g_sd_n = 0;
+}
+// a super throw in the air: no defender can catch, tip or bat it, at the line or downfield
+int rb_off_super_ignores_ball(CInstance *player) {
+    if (!O.sup_live || !O.ball || rb_get_inst_real(O.ball, SLOT_STATE) != 3) return 0;
+    if (rb_get_inst_real(player, SLOT_OFFENSE) > 0.5) return 0;
+    if (!O.sup_skip_logged) { O.sup_skip_logged = 1; rb_log("offtools: super throw - a defender reached it, can't touch it"); }
+    return 1;
 }
 // ---- the push (short yardage): the line fires straight ahead, the back gets in behind the QB and
 // shoves, and any defender in contact with the pile drives at part strength. Real bodies, as with the

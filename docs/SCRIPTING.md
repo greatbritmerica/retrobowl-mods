@@ -160,7 +160,7 @@ the top sideline (`field_top()`) to the bottom one (`field_bottom()`). `yard(1)`
 
 - A block may take 20,000 steps per run (4,000 for `on frame`); past that it stops with
   "the script ran too long (is a loop running away?)".
-- Up to 48 `on` blocks, 64 variables and 32 players in a list.
+- Up to 48 `on` blocks, 128 variables (64 before mod build v94) and 32 players in a list.
 - **Load errors** (bad syntax, unknown function, wrong number of values) keep the whole file from loading;
   the log names the line, e.g. `use == to compare (a single = sets a variable)`.
 - **Run errors** (a missing player, `nil` in a sum, an unknown game value) switch off only that block,

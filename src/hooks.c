@@ -361,7 +361,7 @@ extern unsigned rb_spr_calls;
 // route previews (s_draw_my_route): on CPU drives they'd show the player the CPU's routes
 // s_check_ball_collision, run as each player: can he catch / intercept / tip the ball this frame
 RValue *hook_ball_collision(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
-    if (g_match_live && (rb_off_blocker_ignores_ball(self) || rb_dbrain_ball_contact(self, other))) {
+    if (g_match_live && (rb_off_blocker_ignores_ball(self) || rb_off_super_ignores_ball(self) || rb_dbrain_ball_contact(self, other))) {
         res->kind = RV_UNDEFINED; res->i64 = 0;
         return res;
     }
@@ -378,6 +378,7 @@ long hook_spr_draw(CInstance *self, long sprite, long colour, float sub, float x
                    float xs, float ys, float rot, float alpha) {
     RbDrawSprFn orig = (RbDrawSprFn)RB_TRAMP(HK_spr_draw);
     rb_spr_calls++;
+    if (rb_off_spr_draw(sprite)) return 0;
     if (!rb_cam3d_in_gui_pass && rb_cam3d_on && rb_cam3d_active())
         return rb_cam3d_spr_draw(orig, self, sprite, colour, sub, x, y, xs, ys, rot, alpha);
     return orig(self, sprite, colour, sub, x, y, xs, ys, rot, alpha);

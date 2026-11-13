@@ -121,7 +121,7 @@ void rb_ui_panel(int pid, int side, double width, const char *title, const char 
                  const char **buttons, int n, void (*cb)(int)) {
     if (pid < 0 || pid >= RB_UI_PANELS) return;
     if (n > 7) n = 7;
-    struct { char t[96], m[240], b[7][40]; int n; } c;
+    struct { char t[96], m[520], b[7][40]; int n; } c;
     memset(&c, 0, sizeof c);
     snprintf(c.t, sizeof c.t, "%s", title ? title : "");
     snprintf(c.m, sizeof c.m, "%s", message ? message : "");

@@ -4,6 +4,8 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense);   // eve
 void rb_off_after_ai(CInstance *player);                                  // after the AI moves a player
 double rb_off_pa_bite(void);                                           // how hard the defense bit on play action this play (0 = none)
 int  rb_off_blocker_ignores_ball(CInstance *player);                      // the back, kept in to block, as the ball leaves the QB
+int  rb_off_super_ignores_ball(CInstance *player);                        // a defender while a super throw is in the air
+int  rb_off_spr_draw(long sprite);                                           // 1 = skip this sprite (aim line on a super throw)
 void rb_off_cpu_drive(void);                                              // the CPU has the ball (resets the back's legs)
 double rb_off_los(void);                                                  // real line of scrimmage (x) this play, or < -1e8
 double rb_off_snap_seconds(void);                                         // seconds since the snap on your pass play, or -1

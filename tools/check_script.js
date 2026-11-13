@@ -1,5 +1,5 @@
 // check_script.js - check play scripts with the Workshop's own checker (site/script.js) plus the
-// engine's limits (48 on blocks, 64 variables; src/script.c), alone and as deployed (Hail Mary + step 1).
+// engine's limits (48 on blocks, 128 variables (v94+); src/script.c), alone and as deployed (Hail Mary + step 1).
 //   node tools/check_script.js [file ...]     (default: the two example scripts)
 //   node tools/check_script.js --hook         (Claude Code hook: reads the edit from stdin, checks
 //                                              only when a script in examples/ changed, exit 2 on failure)
@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const { check } = require(path.join(ROOT, 'site', 'script.js'));
-const MAX_BLOCKS = 48, MAX_VARS = 64;
+const MAX_BLOCKS = 48, MAX_VARS = 128;
 
 function vars(src) {   // distinct names a script sets (assignments and for-loop names), as the engine counts them
   const t = src.replace(/#.*/g, '');
@@ -38,9 +38,9 @@ function run(files) {
 
 function selftest() {
   const assert = require('assert');
-  assert.deepStrictEqual(verdict('a', 'on snap\n  x = 1\nend\n'), [true, 'a: loads - 1/48 on blocks, 1/64 variables']);
+  assert.deepStrictEqual(verdict('a', 'on snap\n  x = 1\nend\n'), [true, 'a: loads - 1/48 on blocks, 1/128 variables']);
   assert.strictEqual(verdict('b', 'on snap\n  frob()\nend\n')[0], false);
-  assert.strictEqual(verdict('c', 'on snap\n' + Array.from({ length: 65 }, (_, i) => `  v${i} = 1\n`).join('') + 'end\n')[0], false);
+  assert.strictEqual(verdict('c', 'on snap\n' + Array.from({ length: 129 }, (_, i) => `  v${i} = 1\n`).join('') + 'end\n')[0], false);
   assert.strictEqual(vars('on snap\n  if a == 1\n    b = 2   # c = 3\n  end\n  for p in offense()\n  end\nend\n'), 2);
   console.log('selftest ok');
 }
