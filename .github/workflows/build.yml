@@ -11,6 +11,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Test the super throw flight math
         run: mkdir -p build && cc -o build/bullet_test tests/bullet_test.c src/bullet.c -lm && build/bullet_test
+      - name: Test the coordinator brain
+        run: mkdir -p build && cc -o build/ocbrain_test tests/ocbrain_test.c src/ocbrain.c -lm && build/ocbrain_test
       - name: Build libRBMod.dylib
         run: make
       - name: Inspect
