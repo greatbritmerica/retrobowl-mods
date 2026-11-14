@@ -60,7 +60,6 @@ const TuneDef RB_TUNE[T_COUNT] = {
     { "toss_on", 1.0, 0.0, 1.0 },
     { "toss_flip", 1.0, 0.2, 4.0 },
     { "punt_on", 1.0, 0.0, 1.0 },
-    { "punter_depth", 15.0, 5.0, 20.0 },
     { "punt_min", 20.0, 5.0, 40.0 },
     { "punt_max", 55.0, 30.0, 75.0 },
     { "punt_aim_max", 20.0, 0.0, 45.0 },

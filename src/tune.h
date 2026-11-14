@@ -61,7 +61,6 @@ typedef enum {
     T_TOSS_ON,
     T_TOSS_FLIP,
     T_PUNT_ON,
-    T_PUNTER_DEPTH,
     T_PUNT_MIN,
     T_PUNT_MAX,
     T_PUNT_AIM_MAX,

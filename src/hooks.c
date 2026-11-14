@@ -465,6 +465,7 @@ void hook_controller_gui(CInstance *self, CInstance *other) {
     rb_game_controller = self;
     rb_cpuqb_fourth_tick();                    // runs even while the game waits on the 4th-down message
     cpu_fourth_action(self, other);
+    rb_punt_controller(self, other);           // your punt, once its flight is over (the punt deletes the ball)
     rb_cam3d_gui_pass(self, gui_draw_player, gui_draw_ball, gui_draw_text);      // standing players + sky, under the HUD
     ORIG_EV(controller_gui)(self, other);
     if (g_match_live) { rb_off_gui(self); rb_punt_gui(self); }           // on top of the HUD

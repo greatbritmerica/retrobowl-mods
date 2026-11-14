@@ -10,6 +10,7 @@ void rb_punt_after_commentary(void);                          // after the outer
 void rb_punt_possession(unsigned long long caller, double before, double after, double human);   // after s_change_possession
 void rb_punt_slog(const char *line);                          // every line of the game's own log
 void rb_punt_destroy(void);                                   // match objects about to be freed
+void rb_punt_controller(CInstance *self, CInstance *other);   // controller GUI step: fires your punt after its flight
 void rb_punt_gui(CInstance *self);                            // draw on the GUI layer (kick power)
 int  rb_punt_armed(void);                                     // 1 = the coming/current play is a punt play
 void rb_punt_arm(int on);                                     // the pre-snap Punt button

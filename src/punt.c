@@ -1,15 +1,17 @@
 // punt.c - punts.
 //
 // YOUR PUNTS. On 4th down the mod's pre-snap panel has a Punt button (tapping Punt on the game's 4th-down
-// question does the same): the QB (your punter) lines up PUNTER_DEPTH yards deep. Snap it and either run
-// with him (a fake) or pull back to aim: on a punt play the pull-back IS the kick - its length is the power,
-// its direction the aim. Let go and the ball flies (players freeze) for FLIGHT_SECONDS, then the game's own
-// punt runs and the mod puts the other team where your punt landed.
+// question does the same). Snap it and either run with the QB (a fake) or pull back to aim: on a punt play
+// the pull-back IS the kick - its length is the power, its direction the aim. Let go and the ball flies
+// (players freeze) for FLIGHT_SECONDS, then the game's own punt runs (fired from the controller's GUI step,
+// never from inside the ball's step: the punt deletes the ball) and the other team starts where it landed.
 //
 // CPU PUNTS. When the CPU punts to you, the game's punt runs as always, then the mod turns the ball back
 // over to the CPU and sends the commentary to its KICKOFF stage: the kickoff return you know starts. On its
-// first frame everybody is moved so the catch comes where the punt lands (about PUNT_DIST yards from the
-// CPU's line); at the catch the CPU's cover team is brought in to PUNT_COVER yards, as on a real punt.
+// catch everybody is moved so it comes where the punt lands (about PUNT_DIST yards from the CPU's line) and
+// the CPU's cover team is brought in to PUNT_COVER yards, as on a real punt. (Moving them before the kick
+// froze the kickoff in the v98 test: the kicker never kicked. The ball isn't stepped in the air, so the
+// catch is the first chance.)
 // Where your returner goes down is where your drive starts. If anything is missing (the
 // kickoff stage number isn't known yet, end of the quarter, kick returns off) the game's punt stands.
 #include "rb.h"
@@ -23,7 +25,6 @@
 
 // ---- tunables (Workshop: Punting, Punt returns)
 #define PUNT_ON        T(T_PUNT_ON)          // 1 = play your punts
-#define PUNTER_DEPTH   T(T_PUNTER_DEPTH)     // yards your punter lines up behind the line
 #define PUNT_MIN       T(T_PUNT_MIN)         // yards for the weakest pull-back
 #define PUNT_MAX       T(T_PUNT_MAX)         // yards for a full pull-back
 #define PUNT_AIM_MAX   T(T_PUNT_AIM_MAX)     // widest aim, degrees off straight downfield
@@ -51,8 +52,8 @@ static double possession(void) { return rb_get_obj_real(OBJ_CONTROLLER, SLOT_POS
 // ================================================================ your punts
 static struct {
     int armed;                 // you tapped Punt: the coming 4th-down play is a punt play
-    CInstance *ball, *qb;      // that play's ball, the punter
-    double qb_x0;              // where the punter stood before he was moved deep (0 = not moved)
+    CInstance *ball;           // that play's ball
+    int fire;                  // the flight is over: fire the game's punt from the controller's GUI step
     int kick;                  // kick mode on (the pull-back is the punt)
     double pow, dir;           // the pull-back while held (length, aim in screen degrees)
     int flight; unsigned ft, fn;
@@ -70,7 +71,6 @@ int rb_punt_armed(void) { return P.armed; }
 // the pre-snap panel's Punt button (your ball, 4th down, before the snap)
 void rb_punt_arm(int on) {
     if (P.kick) rb_ui_panel_close(RB_PANEL_KICK);
-    if (!on && P.qb && P.qb_x0) rb_set_builtin_real(P.qb, SLOT_X, P.qb_x0);   // punt off: QB back under centre
     memset(&P, 0, sizeof P);
     P.armed = on && PUNT_ON;
     rb_log("punt: Punt button - %s", P.armed ? "punt play on: pull back to aim and kick, or run it (a fake)" : "punt play off");
@@ -93,15 +93,6 @@ int rb_punt_action_result(double code) {
     return PR_SWALLOW;                                // the button then closes the question: your 4th-down play comes up
 }
 
-typedef struct { CInstance *p; } HolderCtx;
-static int holder_cb(CInstance *inst, void *ctx) { ((HolderCtx *)ctx)->p = inst; return 1; }
-static CInstance *ball_holder(CInstance *ball, CInstance *other) {
-    RValue *h = rb_inst_var(ball, SLOT_HOLDER);
-    HolderCtx c = { 0 };
-    if (h && h->kind != RV_UNDEFINED) { RValue v = *h; rb_with(&v, ball, other, holder_cb, &c); }
-    return c.p;
-}
-
 static void fire_punt(CInstance *ball, CInstance *other) {
     RValue code = {0}, res = {0};
     code.kind = RV_REAL; code.real = ACTION_RESULT_PUNT; res.kind = RV_UNDEFINED;
@@ -119,7 +110,7 @@ static void kick(CInstance *ball, CInstance *other) {
     if (!fwd || los < -1e8 || scrim < -9000 || qx < -9000) {
         rb_log("punt: FALLBACK - can't read the field (fwd %g, line %.0f, yard line %.1f) - the game's own punt", fwd, los, scrim);
         g_spot = NO_SPOT; P.armed = 0;
-        fire_punt(ball, other);
+        g_done_ball = ball; P.fire = 1;
         return;
     }
     double power = P.pow / FULL_DRAG;
@@ -139,12 +130,16 @@ static void kick(CInstance *ball, CInstance *other) {
     P.fn = (unsigned)(FLIGHT_SECONDS * 60);
     if (P.fn < 10) P.fn = 10;
     P.sx = qx; P.sy = qy; P.lx = pl.lx; P.ly = pl.ly;
+    // the ball on screen stops short of the goal lines: a ball over one reads as a touchdown to the game
+    double lim = 49 * KM_PX_PER_YD;
+    if (P.lx < KM_MID_X - lim) P.lx = KM_MID_X - lim;
+    if (P.lx > KM_MID_X + lim) P.lx = KM_MID_X + lim;
     P.peak = yards * KM_PX_PER_YD * 0.25;
     if (P.peak > 120) P.peak = 120;
 }
 
 // ================================================================ CPU punts -> live returns
-enum { R_IDLE, R_SEEN, R_CONVERT, R_KICK, R_AIR, R_LIVE };
+enum { R_IDLE, R_SEEN, R_CONVERT, R_KICK, R_LIVE };
 static struct { int st; double cpu_scrim, cpu_team, land, game_spot, ret_x, goal_side, last_x; CInstance *ball; } R;
 static double g_stage_kickoff = -1;     // commentary stage number of KICKOFF, learned at the first kickoff
 
@@ -193,7 +188,7 @@ void rb_punt_possession(unsigned long long caller, double before, double after, 
         rb_log("punt return: %.0f-yd punt to your %.0f (the game's spot was %.1f) - turning it into a return", yards, 50 + R.land, R.game_spot);
         return;
     }
-    if ((R.st == R_KICK || R.st == R_AIR) && caller == CALLER_S_KICK_OFF && before != human && after == human) {   // no live return (kick returns off)
+    if (R.st == R_KICK && caller == CALLER_S_KICK_OFF && before != human && after == human) {   // no live return (kick returns off)
         rb_set_obj_real(OBJ_CONTROLLER, SLOT_SCRIMMAGE, R.land);
         rb_log("punt return: FALLBACK - the kickoff was instant (kick returns off?) - your ball where the punt landed, yard line %.1f", R.land);
         R.st = R_IDLE;
@@ -268,16 +263,11 @@ static void cover_in(CInstance *ball, CInstance *other) {
 }
 
 static void return_step(CInstance *ball, CInstance *other) {
-    if (R.st == R_KICK) {                              // no early frame came: move it all now
+    if (R.st == R_KICK) {                              // the kickoff ball's first step: the catch
         shift_to_landing(ball, other);
-        R.st = R_AIR;
-    }
-    double st = rb_get_inst_real(ball, SLOT_STATE);
-    if (R.st == R_AIR) {
-        if (st == 4) return;                           // still in the air
         cover_in(ball, other);
         R.st = R_LIVE; R.ball = ball; R.last_x = rb_get_builtin_real(ball, SLOT_X);
-        rb_log("punt return: live (ball state %g)", st);
+        rb_log("punt return: live (ball state %g)", rb_get_inst_real(ball, SLOT_STATE));
         return;
     }
     if (R.st == R_LIVE) {
@@ -298,7 +288,7 @@ void rb_punt_destroy(void) {
             rb_log("punt return: spot corrected %.1f -> %.1f", got, want);
         }
         R.st = R_IDLE;
-    } else if (R.st == R_AIR) { rb_log("punt return: play torn down before the catch"); R.st = R_IDLE; }
+    }
     g_done_ball = 0;
     if (P.flight) {                                    // torn down mid-flight (match quit): drop it all
         rb_log("punt: play torn down during the flight - punt dropped");
@@ -308,12 +298,15 @@ void rb_punt_destroy(void) {
         if (P.kick) rb_ui_panel_close(RB_PANEL_KICK);
         rb_log("punt: punt play over without a kick (a fake)");
         memset(&P, 0, sizeof P);
-    } else { P.ball = 0; P.qb = 0; }                    // rebuilt before the snap: find the new ones
+    } else if (P.fire) {                               // torn down before the punt fired: nothing to punt from
+        rb_log("punt: play torn down before the punt fired - dropped");
+        memset(&P, 0, sizeof P); g_spot = NO_SPOT;
+    } else P.ball = 0;                                  // rebuilt before the snap: find the new one
 }
 
 // ================================================================ per ball step
 int rb_punt_ball(CInstance *ball, CInstance *other) {
-    if (R.st == R_KICK || R.st == R_AIR || R.st == R_LIVE) return_step(ball, other);
+    if (R.st == R_KICK || R.st == R_LIVE) return_step(ball, other);
     if (ball == g_done_ball) return 1;
     if (!P.armed) return 0;
     if (!P.flight && possession() != human_team()) {   // the ball changed hands before your punt play: it's off
@@ -343,26 +336,12 @@ int rb_punt_ball(CInstance *ball, CInstance *other) {
         if (P.ft >= P.fn) {
             rb_log("punt: ball down - the game's punt runs now");
             P.flight = 0; P.armed = 0;
-            g_done_ball = ball;                        // cleared when the play is torn down
-            fire_punt(ball, other);
-            if (g_done_ball) rb_log("punt: the play wasn't torn down by the punt (ball state %g) - holding it", rb_get_inst_real(ball, SLOT_STATE));
+            g_done_ball = ball;                        // held still until the play is torn down
+            P.fire = 1; P.kick = 0;                    // rb_punt_controller fires the punt (no power bar meanwhile)
         }
         return 1;                                      // the game doesn't step the ball (no throw, no tackle of the ball)
     }
-    if (st == 0) {                                     // before the snap: punter deep
-        double fwd = rb_off_fwd(), los = rb_off_los();
-        if (!P.qb) P.qb = ball_holder(ball, other);
-        if (P.qb && fwd && los > -1e8) {
-            double depth = PUNTER_DEPTH, room = rb_get_obj_real(OBJ_CONTROLLER, SLOT_SCRIMMAGE) + 58;   // stay in front of the end line
-            if (depth > room) depth = room;
-            if (depth < 1) depth = 1;
-            if (!P.qb_x0) P.qb_x0 = rb_get_builtin_real(P.qb, SLOT_X);
-            rb_set_builtin_real(P.qb, SLOT_X, los - fwd * depth * KM_PX_PER_YD);
-            static CInstance *noted;
-            if (noted != ball) { noted = ball; rb_log("punt: punter set %.0f yds deep at x %.0f", depth, los - fwd * depth * KM_PX_PER_YD); }
-        }
-        return 0;
-    }
+    if (st == 0) return 0;                             // before the snap
     if (!P.snapped) { P.snapped = 1; rb_log("punt: snapped"); }
     if (!P.kick) {
         if (st != 2) return 0;                          // aiming on a punt play: the pull-back is the kick
@@ -389,9 +368,16 @@ int rb_punt_ball(CInstance *ball, CInstance *other) {
 }
 
 void rb_punt_after_ai(CInstance *player) {
-    // the kickoff's first AI frame (after the game placed the returner): move it all before the kick
-    if (R.st == R_KICK && R.ret_x) { shift_to_landing(player, player); R.st = R_AIR; }
     if (P.flight) rb_set_inst_real(player, SLOT_JFORCE, 0);      // everybody holds while the ball is up
+}
+
+// controller GUI step (where the CPU's punts and kicks are fired too): fire your punt once the flight is over
+void rb_punt_controller(CInstance *self, CInstance *other) {
+    if (!P.fire) return;
+    P.fire = 0;
+    rb_log("punt: firing the game's punt");
+    fire_punt(self, other);
+    if (g_done_ball) rb_log("punt: the play wasn't torn down by the punt - holding the ball");
 }
 
 // ---- kick power bar while in kick mode

@@ -642,17 +642,6 @@
  },
  {
   "group": "Punting",
-  "key": "punter_depth",
-  "label": "Punter depth",
-  "def": 15,
-  "min": 5,
-  "max": 20,
-  "step": 1,
-  "pct": false,
-  "help": "Yards behind the line your punter (the QB) lines up on a punt."
- },
- {
-  "group": "Punting",
   "key": "punt_min",
   "label": "Weakest punt",
   "def": 20,
