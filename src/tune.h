@@ -71,6 +71,7 @@ typedef enum {
     T_PUNT_RETURN,
     T_PUNT_DIST,
     T_PUNT_SPREAD,
+    T_PUNT_COVER,
     T_PRACTICE_ON,
     T_PRACTICE_BOOST,
     T_COUNT

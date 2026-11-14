@@ -751,6 +751,17 @@
   "help": "CPU punts land up to this many yards shorter or longer than the average."
  },
  {
+  "group": "Punt returns",
+  "key": "punt_cover",
+  "label": "Coverage gap at the catch",
+  "def": 10,
+  "min": 3,
+  "max": 40,
+  "step": 1,
+  "pct": false,
+  "help": "Yards between your returner and the nearest CPU cover man when he catches the punt. Smaller = harder returns."
+ },
+ {
   "group": "Weekly practice",
   "key": "practice_on",
   "label": "Weekly practice",

@@ -70,6 +70,7 @@ const TuneDef RB_TUNE[T_COUNT] = {
     { "punt_return", 1.0, 0.0, 1.0 },
     { "punt_dist", 42.0, 25.0, 60.0 },
     { "punt_spread", 8.0, 0.0, 20.0 },
+    { "punt_cover", 10.0, 3.0, 40.0 },
     { "practice_on", 1.0, 0.0, 1.0 },
     { "practice_boost", 1.0, 0.0, 3.0 },
 };

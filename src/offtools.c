@@ -153,12 +153,17 @@ static void fill_ctx(void) {
     rb_rctx.score_diff = us >= 0 && them >= 0 ? us - them : 0;
     rb_rctx.goal = 50 - rb_get_obj_real(OBJ_CONTROLLER, SLOT_SCRIMMAGE);     // the game's own conversion
 }
+static int g_punt_btn, g_rule0 = 4;              // panel numbers of the Punt button (0 = none) and the first rule button
 static void show_presnap(void) {
-    const char *b[3 + RULE_BTNS] = { O.pa_on ? "Play action: ON" : "Play action: off", "Hot route", PROT_BTN[g_prot] };
+    const char *b[4 + RULE_BTNS] = { O.pa_on ? "Play action: ON" : "Play action: off", "Hot route", PROT_BTN[g_prot] };
+    int nb = 3;
+    g_punt_btn = 0;
+    if (T(T_PUNT_ON) && rb_rctx.down == 4) { b[nb++] = rb_punt_armed() ? "Punt: ON" : "Punt"; g_punt_btn = nb; }
+    g_rule0 = nb + 1;
     // buttons your rules asked for (a pressed one shows ON)
     static char rl[RULE_BTNS][48];
     const char *rb[RULE_BTNS];
-    int nb = 3, nr = rb_rules_buttons(rb, RULE_BTNS);
+    int nr = rb_rules_buttons(rb, RULE_BTNS < 10 - nb ? RULE_BTNS : 10 - nb);   // the panel shows at most 10
     for (int i = 0; i < nr; i++) {
         snprintf(rl[i], sizeof rl[i], rb_rules_button_pressed(i) ? "%s: ON" : "%s", rb[i]);
         b[nb++] = rl[i];
@@ -556,7 +561,8 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
             if (e == 1) { O.pa_on = !O.pa_on; rb_log("offtools: play action %s", O.pa_on ? "on" : "off"); show_presnap(); }
             else if (e == 2) open_receivers(ball, other);
             else if (e == 3) { g_prot = (g_prot + 1) % PROT_N; rb_log("offtools: protection set to %s", PROT_NAME[g_prot]); show_presnap(); }
-            else if (e >= 4 && e < 4 + RULE_BTNS) { fill_ctx(); rb_rules_press(e - 4); show_presnap(); }
+            else if (g_punt_btn && e == g_punt_btn) { rb_punt_arm(!rb_punt_armed()); show_presnap(); }
+            else if (e >= g_rule0 && e < g_rule0 + RULE_BTNS) { fill_ctx(); rb_rules_press(e - g_rule0); show_presnap(); }
             else show_presnap();
         }
         if (g_ev_rcv) {
@@ -689,7 +695,7 @@ void rb_off_step(CInstance *ball, CInstance *other, int human_offense) {
     }
 
     // pump fake while aiming
-    if (st == 2 && O.pumps < MAX_PUMPS && !O.sneak && !rb_punt_play()) {   // (a punt play: the second finger is the kick)
+    if (st == 2 && O.pumps < MAX_PUMPS && !O.sneak && !rb_punt_play()) {   // (a punt play: the pull-back is the kick)
         if (!O.pump_shown && !super_armed()) {
             static const char *b[1] = { "PUMP" };
             rb_ui_panel(RB_PANEL_PUMP, RB_SIDE_LEFT_BOTTOM, 124, "", "", b, 1, cb_pump);
