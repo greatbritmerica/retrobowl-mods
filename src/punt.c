@@ -34,7 +34,8 @@
 #define PUNT_RETURN    T(T_PUNT_RETURN)      // 1 = run back the CPU's punts
 #define PUNT_DIST      T(T_PUNT_DIST)        // average CPU punt, yards
 #define PUNT_SPREAD    T(T_PUNT_SPREAD)      // CPU punts land up to this much shorter or longer
-#define PUNT_COVER     T(T_PUNT_COVER)       // yards from your returner to the nearest cover man at the catch
+#define PUNT_PIN       T(T_PUNT_PIN)         // closest yard line (from your goal) a CPU punt lands on
+#define PUNT_COVER     T(T_PUNT_COVER)      // yards from your returner to the nearest cover man at the catch
 #define FULL_DRAG      100.0                 // the game's pull-back length tops out at 100
 
 #define VA_S_ACTION_RESULT 0x1000f7200ULL
@@ -66,6 +67,7 @@ static double g_spot = NO_SPOT;        // the other team's yard line to set afte
 static void cb_none(int i) { (void)i; }   // the kick panel has no buttons
 
 int rb_punt_play(void) { return P.armed && P.ball; }
+int rb_punt_flying(void) { return P.flight || g_done_ball; }
 int rb_punt_armed(void) { return P.armed; }
 
 // the pre-snap panel's Punt button (your ball, 4th down, before the snap)
@@ -176,10 +178,12 @@ void rb_punt_possession(unsigned long long caller, double before, double after, 
         R.game_spot = rb_get_obj_real(OBJ_CONTROLLER, SLOT_SCRIMMAGE);
         double clock = rb_get_obj_real(OBJ_CONTROLLER, SLOT_MINUTES) * 60 + rb_get_obj_real(OBJ_CONTROLLER, SLOT_SECONDS);
         double yards = PUNT_DIST + PUNT_SPREAD * (2 * rnd() - 1), land_cpu = R.cpu_scrim + yards;
-        if (land_cpu >= 50) {
-            rb_set_obj_real(OBJ_CONTROLLER, SLOT_SCRIMMAGE, -30);
-            rb_log("punt return: %.0f-yd punt into the end zone - touchback, your ball at your 20 (the game had %.1f)", yards, R.game_spot);
-            R.st = R_IDLE; return;
+        if (land_cpu > 50 - PUNT_PIN) {                 // would reach your end zone: pinned short of it instead (no touchback)
+            land_cpu = 50 - PUNT_PIN - 10 * rnd();
+            if (land_cpu < R.cpu_scrim + 10) land_cpu = R.cpu_scrim + 10;   // at least 10 yds downfield
+            if (land_cpu > 49) land_cpu = 49;
+            rb_log("punt return: %.0f-yd punt would reach the end zone - pinned at your %.0f instead", yards, 50 - land_cpu);
+            yards = land_cpu - R.cpu_scrim;
         }
         R.land = -land_cpu;
         if (g_stage_kickoff < 0) { rb_log("punt return: FALLBACK - no kickoff seen since the app started, so its stage isn't known: the game's punt stands"); R.st = R_IDLE; return; }
@@ -332,7 +336,7 @@ int rb_punt_ball(CInstance *ball, CInstance *other) {
         if (p > 1) p = 1;
         rb_set_builtin_real(ball, SLOT_X, P.sx + (P.lx - P.sx) * p);
         rb_set_builtin_real(ball, SLOT_Y, P.sy + (P.ly - P.sy) * p);
-        rb_set_inst_real(ball, SLOT_HEIGHT, 4 * P.peak * p * (1 - p));
+        rb_set_inst_real(ball, SLOT_HEIGHT, 4 * P.peak * p * (1 - p) + 3);   // never quite down: a ball on the ground ends the play
         if (P.ft >= P.fn) {
             rb_log("punt: ball down - the game's punt runs now");
             P.flight = 0; P.armed = 0;
@@ -377,7 +381,15 @@ void rb_punt_controller(CInstance *self, CInstance *other) {
     P.fire = 0;
     rb_log("punt: firing the game's punt");
     fire_punt(self, other);
-    if (g_done_ball) rb_log("punt: the play wasn't torn down by the punt - holding the ball");
+    if (g_done_ball) { rb_log("punt: the play wasn't torn down by the punt - holding the ball, alarm 0 left alone"); return; }
+    // The play is gone now. A play-over timer the game queued during the flight (v99: the ball was set down,
+    // alarm 0 then ran on the deleted play and crashed the game) must not run. A normal punt never uses it.
+    static void *f_get, *f_set;
+    if (!f_get) { f_get = rb_builtin("alarm_get"); f_set = rb_builtin("alarm_set"); }
+    double a0[1] = { 0 }, cancel[2] = { 0, -1 };
+    double was = f_get ? rb_call(f_get, self, 1, a0) : -99;
+    if (f_set) rb_call(f_set, self, 2, cancel);
+    rb_log("punt: controller alarm 0 was %g - %s", was, f_set ? "cancelled" : "alarm_set NOT FOUND");
 }
 
 // ---- kick power bar while in kick mode

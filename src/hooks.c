@@ -294,7 +294,10 @@ RValue *hook_update_ball(CInstance *self, CInstance *other, RValue *res, int arg
         rb_tune_play_reset();
         rb_rules_new_play();
     }
-    if (rb_punt_ball(self, other)) { res->i64 = 0; res->kind = RV_UNDEFINED; return res; }   // a punt in the air
+    if (rb_punt_ball(self, other)) {                               // a punt in the air: no sack of the punter either
+        rb_no_windup_sack = 1;
+        res->i64 = 0; res->kind = RV_UNDEFINED; return res;
+    }
     double human = rb_get_obj_real(OBJ_MASTER, SLOT_PLAYERTEAMINDEX);
     double poss = rb_get_obj_real(OBJ_CONTROLLER, SLOT_POSSESSION);
     int cpu_offense = human >= 0 && poss >= 0 && poss != human;
@@ -387,7 +390,7 @@ extern unsigned rb_spr_calls;
 // route previews (s_draw_my_route): on CPU drives they'd show the player the CPU's routes
 // s_check_ball_collision, run as each player: can he catch / intercept / tip the ball this frame
 RValue *hook_ball_collision(CInstance *self, CInstance *other, RValue *res, int argc, RValue **argv) {
-    if (g_match_live && (rb_off_blocker_ignores_ball(self) || rb_off_super_ignores_ball(self) || rb_dbrain_ball_contact(self, other))) {
+    if (g_match_live && (rb_punt_flying() || rb_off_blocker_ignores_ball(self) || rb_off_super_ignores_ball(self) || rb_dbrain_ball_contact(self, other))) {
         res->kind = RV_UNDEFINED; res->i64 = 0;
         return res;
     }

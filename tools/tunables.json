@@ -741,6 +741,17 @@
  },
  {
   "group": "Punt returns",
+  "key": "punt_pin",
+  "label": "Closest a CPU punt lands to your goal",
+  "def": 5,
+  "min": 0,
+  "max": 20,
+  "step": 1,
+  "pct": false,
+  "help": "CPU punts never land closer to your goal than this: a long one lands between this yard line and 10 yards farther out, so you still get a return (no touchbacks)."
+ },
+ {
+  "group": "Punt returns",
   "key": "punt_cover",
   "label": "Coverage gap at the catch",
   "def": 10,

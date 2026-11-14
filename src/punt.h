@@ -14,4 +14,5 @@ void rb_punt_controller(CInstance *self, CInstance *other);   // controller GUI 
 void rb_punt_gui(CInstance *self);                            // draw on the GUI layer (kick power)
 int  rb_punt_armed(void);                                     // 1 = the coming/current play is a punt play
 void rb_punt_arm(int on);                                     // the pre-snap Punt button
+int  rb_punt_flying(void);                                    // 1 = your punt is in the air (or waiting to fire): nobody touches the ball
 int  rb_punt_play(void);                                      // 1 = this play of yours is a punt play (no pump fake / super tap)
