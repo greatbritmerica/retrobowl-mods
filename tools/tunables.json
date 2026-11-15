@@ -638,7 +638,7 @@
   "max": 1,
   "step": 1,
   "pct": false,
-  "help": "1 = tapping Punt on 4th down starts a live play: put a second finger down while aiming to kick, or just run the play as a fake. 0 = the game punts for you at once."
+  "help": "1 = tapping Punt on 4th down lines up a punt play: pull back to aim and let go to kick (the punter kicks like the field goal kicker), or run it as a fake. 0 = the game punts for you at once."
  },
  {
   "group": "Punting",
@@ -677,12 +677,12 @@
   "group": "Punting",
   "key": "punt_flight",
   "label": "Ball flight time",
-  "def": 2,
+  "def": 3.5,
   "min": 0.5,
-  "max": 4,
+  "max": 6,
   "step": 0.1,
   "pct": false,
-  "help": "Seconds the punt is in the air on screen before the other team gets the ball."
+  "help": "Seconds the punt hangs in the air. Longer gives your cover team and their returner more time to get under it."
  },
  {
   "group": "Punting",
@@ -705,6 +705,50 @@
   "step": 0.05,
   "pct": true,
   "help": "How often a weak swipe shanks: the punt goes only half as far."
+ },
+ {
+  "group": "Punting",
+  "key": "punt_ret_depth",
+  "label": "Returner depth",
+  "def": 40,
+  "min": 15,
+  "max": 55,
+  "step": 1,
+  "pct": false,
+  "help": "Yards past the line of scrimmage their returner waits for your punt. He runs to it while it's in the air."
+ },
+ {
+  "group": "Punting",
+  "key": "punt_catch",
+  "label": "Returner catch reach",
+  "def": 2,
+  "min": 0.5,
+  "max": 5,
+  "step": 0.5,
+  "pct": false,
+  "help": "Yards: the returner catches it if he's this close where it comes down. Farther, it hits the ground and rolls."
+ },
+ {
+  "group": "Punting",
+  "key": "punt_muff",
+  "label": "Muff chance",
+  "def": 0.05,
+  "min": 0,
+  "max": 0.5,
+  "step": 0.01,
+  "pct": true,
+  "help": "How often the returner drops the catch: a loose ball either team can recover."
+ },
+ {
+  "group": "Punting",
+  "key": "punt_roll",
+  "label": "Longest roll",
+  "def": 6,
+  "min": 0,
+  "max": 15,
+  "step": 1,
+  "pct": false,
+  "help": "Most yards an uncaught punt rolls after it lands. Your cover team touching it downs it there."
  },
  {
   "group": "Punt returns",
