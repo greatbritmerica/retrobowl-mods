@@ -606,11 +606,21 @@ int rb_punt_ball(CInstance *ball, CInstance *other) {
         double fwd = rb_off_fwd(), los = rb_off_los(), qx = rb_get_builtin_real(ball, SLOT_X);
         if (fwd && los > -1e8 && (qx - los) * fwd >= 0) return 0;   // past the line: no kick (a fake run)
         P.kick = 1; P.pow = rb_get_inst_real(ball, SLOT_DRAGDIST); P.dir = rb_get_inst_real(ball, SLOT_DIREC);
-        NearCtx nc = { qx, rb_get_builtin_real(ball, SLOT_Y), 1e9, 0 };   // the punter: he has the ball
-        RValue ofr = rb_obj_ref(OBJ_PLAYER_OF);
-        rb_with(&ofr, ball, other, near_cb, &nc);
-        P.qb = nc.who;
+        // the punter is the ball's holder (as offtools finds your QB). v101-v104 took the player nearest the
+        // ball, and the v104 log showed that was someone else: your QB is drawn ~2 yds away with his own pictures.
+        RValue *h = rb_inst_var(ball, SLOT_HOLDER);
+        HolderCtx hc = { 0 };
+        if (h && h->kind != RV_UNDEFINED) { RValue c = *h; rb_with(&c, ball, other, holder_cb, &hc); }
+        P.qb = hc.who;
+        if (!P.qb) {                                   // no holder readable: the nearest to the ball, as before
+            NearCtx nc = { qx, rb_get_builtin_real(ball, SLOT_Y), 1e9, 0 };
+            RValue ofr = rb_obj_ref(OBJ_PLAYER_OF);
+            rb_with(&ofr, ball, other, near_cb, &nc);
+            P.qb = nc.who;
+        }
         if (P.qb) { P.qbx = px_x(P.qb); P.qby = px_y(P.qb); }
+        rb_log("punt: punter is %s %p at x %.0f y %.0f (ball at x %.0f)", hc.who ? "the ball's holder" : "NO HOLDER - nearest to the ball",
+               (void *)P.qb, P.qbx, P.qby, qx);
         static const char *none[1];
         rb_ui_panel(RB_PANEL_KICK, RB_SIDE_RIGHT_BOTTOM, 150, "KICK", "Pull back for power and aim, let go to punt", none, 0, cb_none);
         rb_log("punt: kick mode on (ball state %g, QB at x %.0f)", st, qx);
@@ -630,9 +640,8 @@ int rb_punt_ball(CInstance *ball, CInstance *other) {
     return 0;
 }
 
-// a picture the game is about to draw: the punter's pictures become the kicker's. The v102 log showed
-// players drawn with spr_stand / spr_run (never spr_qb_*) and the draw's instance can't be trusted, so
-// the punter's pictures are the player pictures drawn at his spot.
+// a picture the game is about to draw: the punter's own body pictures become the kicker's. Each player draws
+// himself (the v104 log: the draw's instance is that player), so the punter's are the draws he makes.
 static int body_variant(long s) {                      // 0 normal, 1 bulky, 2 thin; -1 = not a player picture
     switch (s) {
     case 384: case 375: case 378: case 350: case 344: case 347:   // spr_stand, stand_ball, stand_ball2, run, run_ball, run_ball2
@@ -654,11 +663,9 @@ static void seen_log(const char *when) {
     g_nseen = 0;
 }
 // Diagnostic (v104): on three chosen frames every picture drawn near the punter is logged with its size,
-// colour and see-through amount, to tell his body from a shadow or outline. While aiming, the picture the
-// swap matches is drawn double size: on screen a giant punter proves the match finds his visible body.
+// colour and see-through amount; "(punter)" marks the punter's own drawings (his swapped ones say so).
 #define DIAG_PX     40.0                               // px around the punter that the diagnostic logs
 #define DIAG_LINES  40                                 // most lines logged for one diagnostic frame
-#define AIM_MARK    2.0f                               // size of the matched picture while aiming (1 = normal)
 static void draw_diag(CInstance *self, long sprite, float sub, float x, float y, float xs, float ys, long colour, float rot, float alpha) {
     int tag = !P.flight && !P.roll ? (P.aimf == 10 ? 1 : 0)
             : P.flight && P.kt == 3 ? 2 : P.flight && P.kt == KICK_DELAY + 6 ? 3 : 0;
@@ -666,21 +673,25 @@ static void draw_diag(CInstance *self, long sprite, float sub, float x, float y,
     if (tag != P.diag_tag) { P.diag_tag = tag; P.diag_n = 0; }
     if (P.diag_n++ >= DIAG_LINES) return;
     static const char *when[4] = { "", "aiming", "set-up", "kick" };
+    int v = body_variant(sprite);
     rb_log("punt: draw near punter [%s] spr %ld sub %.1f at %+.1f,%+.1f xs %.2f ys %.2f rot %.0f col %06lx a %.2f self %p%s",
-           when[tag], sprite, sub, x - P.qbx, y - P.qby, xs, ys, rot, colour & 0xffffff, alpha, (void *)self, self && self == P.qb ? " (punter)" : "");
+           when[tag], sprite, sub, x - P.qbx, y - P.qby, xs, ys, rot, colour & 0xffffff, alpha, (void *)self,
+           self && self == P.qb ? (v >= 0 ? " (punter - swapped for the kicker's)" : " (punter)") : "");
 }
 long rb_punt_spr(CInstance *self, long sprite, float *sub, float x, float y, float *xs, float *ys, long colour, float rot, float alpha) {
     if (!P.qb || !(P.kick || P.flight || P.roll)) return sprite;
     draw_diag(self, sprite, *sub, x, y, *xs, *ys, colour, rot, alpha);
-    if (fabs(x - P.qbx) > AT_PUNTER_X + 6 || fabs(y - P.qby) > AT_PUNTER_Y + 6) return sprite;
+    // his own drawings (the v104 log: the draw's instance is the player, steady from frame to frame);
+    // a draw with no instance counts only when it is right on his spot
+    int his = self ? self == P.qb : fabs(x - P.qbx) <= AT_PUNTER_X && fabs(y - P.qby) <= AT_PUNTER_Y;
+    if (!his) return sprite;
     int i;
     for (i = 0; i < g_nseen && g_seen[i] != sprite; i++) {}
     if (i == g_nseen && g_nseen < 16) g_seen[g_nseen++] = sprite;
-    if (fabs(x - P.qbx) > AT_PUNTER_X || fabs(y - P.qby) > AT_PUNTER_Y) return sprite;
     int v = body_variant(sprite);
     if (v < 0) return sprite;
     P.spr_swaps++;
-    if (!P.flight && !P.roll) { *sub = 0; *xs *= AIM_MARK; *ys *= AIM_MARK; return SPR_KICK1[v]; }   // aiming: the kicker's set-up pose, marked
+    if (!P.flight && !P.roll) { *sub = 0; return SPR_KICK1[v]; }   // aiming: the kicker's set-up pose
     if (P.kt < KICK_DELAY) { *sub = (float)(P.kt / KICK1_EACH); return SPR_KICK1[v]; }
     unsigned t = (P.kt - KICK_DELAY) / KICK2_EACH;
     *sub = (float)(t < 4 ? t : 4);                     // then the kick, holding the follow-through

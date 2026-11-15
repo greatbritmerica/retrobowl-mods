@@ -530,7 +530,7 @@ on presnap
   spy_release = 2        # yards the back must move from where he lined up before a spy goes with him
   spy_time = 1.5         # seconds the spy follows him, at most
   spy_lead = 1           # yards in front of the back the spy aims for
-  spy_break = 2          # how many defenders break on a throw to the back
+  spy_break = 0          # how many defenders break on a throw to the back (0 = everyone stays on his man)
   spy_reach = 3          # a throw coming down within this many yards of the back counts as his
   spy_t = -1             # (not a setting) when the spy started: -1 not yet, 99 done
 end
