@@ -3,8 +3,8 @@
 // YOUR PUNTS. On 4th down the mod's pre-snap panel has a Punt button (tapping Punt on the game's 4th-down
 // question does the same). Snap it and either run with the QB (a fake) or pull back to aim: on a punt play
 // the pull-back IS the kick - its length is the power, its direction the aim. At the snap their deepest man
-// drops to PUNT_RET_DEPTH as the returner. Let go and the punter plays the field goal kicker's kick
-// animation (s_kick_ball's s_set_anim(15)); the ball hangs FLIGHT_SECONDS while your cover team runs at it,
+// drops to PUNT_RET_DEPTH as the returner. The punter wears the field goal kicker's pictures (rb_punt_spr):
+// set-up pose while you aim, the kick when you let go. The ball hangs FLIGHT_SECONDS while your cover team runs at it,
 // the returner runs under it and his blockers set up in front of him. Then:
 //   out of bounds / into the end zone: the game's own punt runs (fired from the controller's GUI step, never
 //   inside the ball's step: the punt deletes the ball) with the spot set (touchback = their 20);
@@ -57,10 +57,19 @@
 
 #define VA_S_RECEIVE_BALL 0x1004d0974ULL     // a catch, run as the catcher: holder = him, ball state 5
 #define VA_S_DROP_BALL    0x100395780ULL     // run as the holder: (true) = fumble, a live loose ball
-#define VA_S_SET_ANIM     0x1004fb230ULL     // run as a player: his animation
-#define ANIM_KICK         15                 // the one s_kick_ball plays on the kicker
 #define BALL_INT_RETURN   9                  // ball state of the game's interception return
-#define SLOT_SPRITE_INDEX 0x100fb08d8ULL
+#define SLOT_VISIBLE      0x100fb0838ULL
+#define OBJ_MATCH_MSG     89                 // the game's on-field message ("Interception!"), from game.ios OBJT
+#define HIDE_FRAMES       30                 // frames after the catch its "Interception!" is kept hidden
+
+// The punter wears the field goal kicker's pictures (game.ios SPRT: spr_kick1 = set-up, 3 frames;
+// spr_kick2 = the kick, 5 frames), in his own body type. Players aren't drawn from sprite_index (it read 0),
+// so the swap is made where the game draws each picture.
+#define KICK1_EACH        3                  // game frames per set-up frame after you let go
+#define KICK2_EACH        5                  // game frames per kick frame
+#define KICK_DELAY        (3 * KICK1_EACH)   // the ball leaves his foot after the set-up frames
+static const long SPR_KICK1[3] = { 270, 268, 269 };   // normal, bulky, thin
+static const long SPR_KICK2[3] = { 273, 271, 272 };
 
 #define VA_S_ACTION_RESULT 0x1000f7200ULL
 #define CALLER_S_PUNT      0x1004cedacULL    // s_change_possession called from s_punt
@@ -91,7 +100,10 @@ static struct {
     CInstance *of[12]; int nof;    // your players (cover team)
     int roll; unsigned rt, rn; double rx, ry, rdx, rdy;   // an uncaught punt rolling
     int live; unsigned t, muff_at; double last_x; int holder_mine;   // the return, in the game's hands
+    int muffed;                // the muff happened (its message isn't hidden)
+    unsigned kt, spr_swaps;    // frames since you let go (kicker pictures), pictures swapped
 } P;
+static void hide_int_msg(CInstance *self, CInstance *other);
 static CInstance *g_done_ball;         // the ball your punt left from: the game doesn't step it again
 static double g_spot = NO_SPOT;        // the other team's yard line to set after your punt
 static void cb_none(int i) { (void)i; }   // the kick panel has no buttons
@@ -227,9 +239,10 @@ static void catch_it(CInstance *ball, CInstance *other, int in_air) {
     P.flight = 0; P.roll = 0; P.armed = 0; P.kick = 0;
     P.live = 1; P.t = 0; P.muff_at = 0; P.last_x = x; P.holder_mine = 0;
     if (in_air && rnd() < PUNT_MUFF) P.muff_at = MUFF_FRAMES;
-    rb_log("punt: %s by the returner at x %.0f (your yard line %.1f) - ball state %g -> %g (catch) -> %d: live return%s",
+    rb_log("punt: %s by the returner at x %.0f (your yard line %.1f) - ball state %g -> %g (catch) -> %d: live return%s (kicker pictures drawn %u times)",
            in_air ? "caught" : "picked up", x, km_yardline(P.scrim, P.los, P.fwd, x), st0, st1, BALL_INT_RETURN,
-           P.muff_at ? " - MUFFED, the ball comes loose" : "");
+           P.muff_at ? " - MUFFED, the ball comes loose" : "", P.spr_swaps);
+    hide_int_msg(ball, other);                         // (its message may come with the catch)
 }
 
 static void land(CInstance *ball, CInstance *other) {
@@ -240,7 +253,7 @@ static void land(CInstance *ball, CInstance *other) {
     double dx = P.lx - P.sx, dy = P.ly - P.sy, n = hypot(dx, dy);
     double yds = rnd() * PUNT_ROLL;
     P.rn = (unsigned)(yds * KM_PX_PER_YD / ROLL_PX);
-    rb_log("punt: lands at x %.0f y %.0f, returner %.1f yds away - rolls %.1f yds", P.lx, P.ly, reach, yds);
+    rb_log("punt: lands at x %.0f y %.0f, returner %.1f yds away - rolls %.1f yds (kicker pictures drawn %u times)", P.lx, P.ly, reach, yds, P.spr_swaps);
     if (!P.rn || n < 1) { finish(ball, P.lx, "downed where it landed"); return; }
     P.roll = 1; P.rt = 0; P.rx = P.lx; P.ry = P.ly;
     P.rdx = dx / n * ROLL_PX; P.rdy = dy / n * ROLL_PX;
@@ -283,6 +296,7 @@ static void live_step(CInstance *ball, CInstance *other) {
         double st = rb_get_inst_real(ball, SLOT_STATE);
         if (st != BALL_INT_RETURN || hc.who != P.ret) { rb_log("punt return: muff skipped - ball state %g, returner %s the ball", st, hc.who == P.ret ? "has" : "doesn't have"); return; }
         RValue yes = {0}; yes.kind = RV_BOOL; yes.real = 1;
+        P.muffed = 1;
         call0(VA_S_DROP_BALL, P.ret, ball, 1, &yes);  // (other = the ball, as the game's collision check calls it)
         rb_log("punt return: muff - ball loose (state %g -> %g)", st, rb_get_inst_real(ball, SLOT_STATE));
     }
@@ -295,7 +309,7 @@ static void kick(CInstance *ball, CInstance *other) {
     double qx = rb_get_builtin_real(ball, SLOT_X), qy = rb_get_builtin_real(ball, SLOT_Y);
     if (!fwd || los < -1e8 || scrim < -9000 || qx < -9000) {
         rb_log("punt: FALLBACK - can't read the field (fwd %g, line %.0f, yard line %.1f) - the game's own punt", fwd, los, scrim);
-        g_spot = NO_SPOT; P.armed = 0;
+        g_spot = NO_SPOT; P.armed = 0; P.kick = 0;
         g_done_ball = ball; P.fire = 1;
         return;
     }
@@ -321,16 +335,14 @@ static void kick(CInstance *ball, CInstance *other) {
     P.nof = 0;
     RValue of = rb_obj_ref(OBJ_PLAYER_OF);
     rb_with(&of, ball, other, of_cb, 0);
-    NearCtx nc = { qx, qy, 1e9, 0 };
-    for (int i = 0; i < P.nof; i++) near_cb(P.of[i], &nc);
-    P.qb = nc.who;
-    if (P.qb) {                                        // the field goal kicker's kick, not a throw
-        double s0 = rb_get_builtin_real(P.qb, SLOT_SPRITE_INDEX);
-        RValue a = {0}; a.kind = RV_REAL; a.real = ANIM_KICK;
-        call0(VA_S_SET_ANIM, P.qb, P.qb, 1, &a);
-        rb_log("punt: punter's kick animation (sprite %g -> %g), %d cover men, returner %s",
-               s0, rb_get_builtin_real(P.qb, SLOT_SPRITE_INDEX), P.nof - 1, P.ret ? "waiting" : "NONE");
+    if (!P.qb) {
+        NearCtx nc = { qx, qy, 1e9, 0 };
+        for (int i = 0; i < P.nof; i++) near_cb(P.of[i], &nc);
+        P.qb = nc.who;
     }
+    P.kt = 0;                                          // the kicker's pictures play from here (rb_punt_spr)
+    rb_log("punt: punter %s, kicker pictures seen %u times while aiming, %d cover men, returner %s",
+           P.qb ? "found" : "NOT FOUND", P.spr_swaps, P.nof - 1, P.ret ? "waiting" : "NONE");
     // the ball on screen stops short of the goal lines: a ball over one reads as a touchdown to the game
     double lim = 49 * KM_PX_PER_YD;
     if (P.lx < KM_MID_X - lim) P.lx = KM_MID_X - lim;
@@ -515,7 +527,7 @@ int rb_punt_ball(CInstance *ball, CInstance *other) {
     if (R.st == R_KICK || R.st == R_LIVE) return_step(ball, other);
     if (ball == g_done_ball) return 1;
     if (P.live) {                                      // the return: the game steps the ball
-        if (ball == P.ball) live_step(ball, other);
+        if (ball == P.ball) { live_step(ball, other); hide_int_msg(ball, other); }
         else { rb_log("punt return: a new play - return tracking dropped"); memset(&P, 0, sizeof P); }
         return 0;
     }
@@ -538,6 +550,12 @@ int rb_punt_ball(CInstance *ball, CInstance *other) {
         return 0;
     }
     if (P.flight) {
+        if (P.kt++ < KICK_DELAY) {                     // his set-up: the ball stays at his feet
+            rb_set_builtin_real(ball, SLOT_X, P.sx);
+            rb_set_builtin_real(ball, SLOT_Y, P.sy);
+            rb_set_inst_real(ball, SLOT_HEIGHT, 3);
+            return 1;
+        }
         P.ft++;
         double p = (double)P.ft / P.fn;
         if (p > 1) p = 1;
@@ -558,6 +576,10 @@ int rb_punt_ball(CInstance *ball, CInstance *other) {
         double fwd = rb_off_fwd(), los = rb_off_los(), qx = rb_get_builtin_real(ball, SLOT_X);
         if (fwd && los > -1e8 && (qx - los) * fwd >= 0) return 0;   // past the line: no kick (a fake run)
         P.kick = 1; P.pow = rb_get_inst_real(ball, SLOT_DRAGDIST); P.dir = rb_get_inst_real(ball, SLOT_DIREC);
+        NearCtx nc = { qx, rb_get_builtin_real(ball, SLOT_Y), 1e9, 0 };   // the punter: he has the ball
+        RValue ofr = rb_obj_ref(OBJ_PLAYER_OF);
+        rb_with(&ofr, ball, other, near_cb, &nc);
+        P.qb = nc.who;
         static const char *none[1];
         rb_ui_panel(RB_PANEL_KICK, RB_SIDE_RIGHT_BOTTOM, 150, "KICK", "Pull back for power and aim, let go to punt", none, 0, cb_none);
         rb_log("punt: kick mode on (ball state %g, QB at x %.0f)", st, qx);
@@ -577,6 +599,35 @@ int rb_punt_ball(CInstance *ball, CInstance *other) {
     return 0;
 }
 
+// a picture the game is about to draw: the punter's QB pictures become the kicker's
+static int body_variant(long s) {                      // 0 normal, 1 bulky, 2 thin; -1 = not a QB picture
+    switch (s) {
+    case 327: case 329: case 332: case 335: case 338: return 0;   // spr_qb_aim_old, aim, slide, throw, walk
+    case 324: case 325: case 330: case 333: case 336: return 1;   // ..._bulky
+    case 326: case 328: case 331: case 334: case 337: return 2;   // ..._thin
+    }
+    return -1;
+}
+long rb_punt_spr(CInstance *self, long sprite, float *sub) {
+    if (!P.qb || self != P.qb || !(P.kick || P.flight || P.roll)) return sprite;
+    int v = body_variant(sprite);
+    if (v < 0) return sprite;
+    P.spr_swaps++;
+    if (!P.flight && !P.roll) { *sub = 0; return SPR_KICK1[v]; }   // aiming: the kicker's set-up pose
+    if (P.kt < KICK_DELAY) { *sub = (float)(P.kt / KICK1_EACH); return SPR_KICK1[v]; }
+    unsigned t = (P.kt - KICK_DELAY) / KICK2_EACH;
+    *sub = (float)(t < 4 ? t : 4);                     // then the kick, holding the follow-through
+    return SPR_KICK2[v];
+}
+
+static int hide_cb(CInstance *inst, void *c) { (void)c; rb_set_builtin_real(inst, SLOT_VISIBLE, 0); return 0; }
+// the game's "Interception!" message on a punt return: kept hidden for its first HIDE_FRAMES
+static void hide_int_msg(CInstance *self, CInstance *other) {
+    if (!P.live || P.t > HIDE_FRAMES || (P.muff_at && P.t >= P.muff_at) || P.muffed || !rb_obj_exists(OBJ_MATCH_MSG)) return;   // (a muff's message shows)
+    RValue m = rb_obj_ref(OBJ_MATCH_MSG);
+    rb_with(&m, self, other, hide_cb, 0);
+}
+
 // while the punt is up or rolling: your punter holds, your cover team runs at it, their returner gets under
 // it and the rest of them set up in front of him
 void rb_punt_after_ai(CInstance *player) {
@@ -593,6 +644,7 @@ void rb_punt_after_ai(CInstance *player) {
 
 // controller GUI step (where the CPU's punts and kicks are fired too): fire your punt once the flight is over
 void rb_punt_controller(CInstance *self, CInstance *other) {
+    hide_int_msg(self, other);                         // (also here: its Draw may come before the ball's next step)
     if (!P.fire) return;
     P.fire = 0;
     rb_log("punt: firing the game's punt");
