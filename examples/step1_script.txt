@@ -512,3 +512,49 @@ on button "Field goal"
   log("s1: field goal called on down", game("down"))
   call("btn_response_fg_yes")
 end
+
+# ============================================================
+# 7. BACK SPY
+# While your QB has the ball the CPU's linebacker nearest your back follows him
+# instead of dropping deep with everyone else. When you throw to the back
+# (Extreme: the game tells where the ball comes down), the defenders nearest
+# the catch break on it. (Not on your own Screen calls.)
+# ============================================================
+
+on presnap
+  # --- Back spy: change these ---
+  spy_on = 1             # 1 = on, 0 = off
+  spy_depth = 2          # yards past the line a defender must be to spy (linebackers, not the pass rush)
+  spy_lead = 1           # yards in front of the back the spy aims for
+  spy_break = 2          # how many defenders break on a throw to the back
+  spy_reach = 3          # a throw coming down within this many yards of the back counts as his
+end
+
+on frame
+  if spy_on and not scr_ready and back() != nil and since_snap() > 0.3 and since_snap() < 6
+    if state() == 1 or state() == 2
+      # the QB still has it: the spy follows the back
+      tx = 0
+      ty = 99999
+      for p in defenders()
+        if (p.x - los_x()) * fwd() > yard(spy_depth)
+          n = dist(p.x, p.y, back().x, back().y)
+          if n < ty
+            ty = n
+            tx = p
+          end
+        end
+      end
+      if ty < 99999
+        steer(tx, back().x + fwd() * yard(spy_lead), back().y, 1)
+      end
+    elif state() == 3 and landing_x() != nil
+      # a throw to the back: the nearest defenders break on where it comes down
+      if dist(landing_x(), landing_y(), back().x, back().y) < yard(spy_reach)
+        for p in nearest(defenders(), landing_x(), landing_y(), spy_break)
+          steer(p, landing_x(), landing_y(), 1)
+        end
+      end
+    end
+  end
+end

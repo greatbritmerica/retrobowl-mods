@@ -102,8 +102,10 @@ static struct {
     int live; unsigned t, muff_at; double last_x; int holder_mine;   // the return, in the game's hands
     int muffed;                // the muff happened (its message isn't hidden)
     unsigned kt, spr_swaps;    // frames since you let go (kicker pictures), pictures swapped
+    double qbx, qby;           // the punter's spot (his pictures are drawn there)
 } P;
 static void hide_int_msg(CInstance *self, CInstance *other);
+static void seen_log(const char *when);
 static CInstance *g_done_ball;         // the ball your punt left from: the game doesn't step it again
 static double g_spot = NO_SPOT;        // the other team's yard line to set after your punt
 static void cb_none(int i) { (void)i; }   // the kick panel has no buttons
@@ -246,6 +248,7 @@ static void catch_it(CInstance *ball, CInstance *other, int in_air) {
 }
 
 static void land(CInstance *ball, CInstance *other) {
+    seen_log("during the kick");
     if (P.out) { finish(ball, P.real_lx, "out of bounds"); return; }
     if (P.tb) { finish(ball, P.real_lx, "into the end zone"); return; }
     double reach = P.ret ? dist_to(P.ret, P.lx, P.ly) / KM_PX_PER_YD : -1;
@@ -339,8 +342,10 @@ static void kick(CInstance *ball, CInstance *other) {
         NearCtx nc = { qx, qy, 1e9, 0 };
         for (int i = 0; i < P.nof; i++) near_cb(P.of[i], &nc);
         P.qb = nc.who;
+        if (P.qb) { P.qbx = px_x(P.qb); P.qby = px_y(P.qb); }
     }
     P.kt = 0;                                          // the kicker's pictures play from here (rb_punt_spr)
+    seen_log("while aiming");
     rb_log("punt: punter %s, kicker pictures seen %u times while aiming, %d cover men, returner %s",
            P.qb ? "found" : "NOT FOUND", P.spr_swaps, P.nof - 1, P.ret ? "waiting" : "NONE");
     // the ball on screen stops short of the goal lines: a ball over one reads as a touchdown to the game
@@ -353,7 +358,15 @@ static void kick(CInstance *ball, CInstance *other) {
 
 // ================================================================ CPU punts -> live returns
 enum { R_IDLE, R_SEEN, R_CONVERT, R_KICK, R_LIVE };
-static struct { int st; double cpu_scrim, cpu_team, land, game_spot, ret_x, goal_side, last_x; CInstance *ball; } R;
+static struct {
+    int st; double cpu_scrim, cpu_team, land, game_spot, ret_x, goal_side, last_x; CInstance *ball;
+    int moved, ret_moved, scaled; double tee_x;   // the kickoff built at the punt spot (no shift at the catch)
+} R;
+#define SLOT_X_SCRIM   0x100fb0518ULL
+#define SLOT_BOUNCE_X  0x100fa1e68ULL               // ball: where the kick comes down (the players run there)
+#define KO_YDS         58.5                         // a CPU kickoff at KO_POW carries this far (v102 log: tee 1010, catch 2181)
+#define KO_POW         42.95
+#define RET_DEEP       5.0                          // your returner starts this many yds behind where the punt lands
 static double g_stage_kickoff = -1;     // commentary stage number of KICKOFF, learned at the first kickoff
 
 void rb_punt_header(const char *name, double stage) {
@@ -418,7 +431,23 @@ void rb_punt_after_commentary(void) {
     rb_log("punt return: ball back to the CPU, commentary sent to KICKOFF (%g)", g_stage_kickoff);
 }
 
+// The kickoff's tee goes where the CPU punted from: s_set_up_kickoff sets x_scrim, logs
+// s_destroy_match_objects, then the players are made around x_scrim. (v98 moved them after they were
+// made and the kicker never kicked; v99-v102 moved everybody at the catch, a 35-yd jump on screen.)
+static void kick_spot(void) {
+    R.moved = 1;
+    double xs = rb_get_obj_real(OBJ_CONTROLLER, SLOT_X_SCRIM), sc = rb_get_obj_real(OBJ_CONTROLLER, SLOT_SCRIMMAGE);
+    if (xs < -9000) { R.moved = 0; rb_log("punt return: FALLBACK - kickoff spot unreadable (x_scrim %.0f): moved at the catch", xs); return; }
+    R.goal_side = xs < KM_MID_X ? 1 : -1;               // the tee is on the kicking team's half: it kicks the other way
+    double dir = R.goal_side;
+    R.tee_x = KM_MID_X + R.goal_side * KM_PX_PER_YD * R.cpu_scrim;
+    rb_set_obj_real(OBJ_CONTROLLER, SLOT_X_SCRIM, R.tee_x);
+    rb_log("punt return: kickoff tee from x %.0f (yard line %.1f, dir %.2f) to the punt spot x %.0f (read back %.0f)",
+           xs, sc, dir, R.tee_x, rb_get_obj_real(OBJ_CONTROLLER, SLOT_X_SCRIM));
+}
+
 void rb_punt_slog(const char *line) {
+    if (R.st == R_KICK && !R.moved && !strncmp(line, "s_destroy_match_objects", 23)) kick_spot();
     const char *o = strstr(line, "Override with a returner: x = ");
     if (o && R.st == R_KICK) {
         double x = 0;
@@ -479,8 +508,8 @@ static void cover_in(CInstance *ball, CInstance *other) {
 
 static void return_step(CInstance *ball, CInstance *other) {
     if (R.st == R_KICK) {                              // the kickoff ball's first step: the catch
-        shift_to_landing(ball, other);
-        cover_in(ball, other);
+        if (!R.moved) { shift_to_landing(ball, other); cover_in(ball, other); }   // (the tee couldn't be moved)
+        else rb_log("punt return: caught at x %.0f (the punt was to land at x %.0f)", rb_get_builtin_real(ball, SLOT_X), km_x_of_yardline(R.land, R.goal_side));
         R.st = R_LIVE; R.ball = ball; R.last_x = rb_get_builtin_real(ball, SLOT_X);
         rb_log("punt return: live (ball state %g)", rb_get_inst_real(ball, SLOT_STATE));
         return;
@@ -580,6 +609,7 @@ int rb_punt_ball(CInstance *ball, CInstance *other) {
         RValue ofr = rb_obj_ref(OBJ_PLAYER_OF);
         rb_with(&ofr, ball, other, near_cb, &nc);
         P.qb = nc.who;
+        if (P.qb) { P.qbx = px_x(P.qb); P.qby = px_y(P.qb); }
         static const char *none[1];
         rb_ui_panel(RB_PANEL_KICK, RB_SIDE_RIGHT_BOTTOM, 150, "KICK", "Pull back for power and aim, let go to punt", none, 0, cb_none);
         rb_log("punt: kick mode on (ball state %g, QB at x %.0f)", st, qx);
@@ -599,17 +629,37 @@ int rb_punt_ball(CInstance *ball, CInstance *other) {
     return 0;
 }
 
-// a picture the game is about to draw: the punter's QB pictures become the kicker's
-static int body_variant(long s) {                      // 0 normal, 1 bulky, 2 thin; -1 = not a QB picture
+// a picture the game is about to draw: the punter's pictures become the kicker's. The v102 log showed
+// players drawn with spr_stand / spr_run (never spr_qb_*) and the draw's instance can't be trusted, so
+// the punter's pictures are the player pictures drawn at his spot.
+static int body_variant(long s) {                      // 0 normal, 1 bulky, 2 thin; -1 = not a player picture
     switch (s) {
+    case 384: case 375: case 378: case 350: case 344: case 347:   // spr_stand, stand_ball, stand_ball2, run, run_ball, run_ball2
     case 327: case 329: case 332: case 335: case 338: return 0;   // spr_qb_aim_old, aim, slide, throw, walk
-    case 324: case 325: case 330: case 333: case 336: return 1;   // ..._bulky
-    case 326: case 328: case 331: case 334: case 337: return 2;   // ..._thin
+    case 379: case 373: case 376: case 348: case 342: case 345:   // ..._bulky
+    case 324: case 325: case 330: case 333: case 336: return 1;
+    case 383: case 374: case 377: case 349: case 343: case 346:   // ..._thin
+    case 326: case 328: case 331: case 334: case 337: return 2;
     }
     return -1;
 }
-long rb_punt_spr(CInstance *self, long sprite, float *sub) {
-    if (!P.qb || self != P.qb || !(P.kick || P.flight || P.roll)) return sprite;
+#define AT_PUNTER_X 4.0                                // px: a picture drawn this close to him is his
+#define AT_PUNTER_Y 8.0
+static long g_seen[16]; static int g_nseen;            // pictures drawn near him this punt (for the log)
+static void seen_log(const char *when) {
+    char m[200]; int n = 0;
+    for (int i = 0; i < g_nseen && n < (int)sizeof m - 8; i++) n += snprintf(m + n, sizeof m - n, " %ld", g_seen[i]);
+    rb_log("punt: pictures drawn at the punter %s:%s (%u swapped for the kicker's)", when, g_nseen ? m : " none", P.spr_swaps);
+    g_nseen = 0;
+}
+long rb_punt_spr(CInstance *self, long sprite, float *sub, float x, float y) {
+    (void)self;
+    if (!P.qb || !(P.kick || P.flight || P.roll)) return sprite;
+    if (fabs(x - P.qbx) > AT_PUNTER_X + 6 || fabs(y - P.qby) > AT_PUNTER_Y + 6) return sprite;
+    int i;
+    for (i = 0; i < g_nseen && g_seen[i] != sprite; i++) {}
+    if (i == g_nseen && g_nseen < 16) g_seen[g_nseen++] = sprite;
+    if (fabs(x - P.qbx) > AT_PUNTER_X || fabs(y - P.qby) > AT_PUNTER_Y) return sprite;
     int v = body_variant(sprite);
     if (v < 0) return sprite;
     P.spr_swaps++;
@@ -631,6 +681,7 @@ static void hide_int_msg(CInstance *self, CInstance *other) {
 // while the punt is up or rolling: your punter holds, your cover team runs at it, their returner gets under
 // it and the rest of them set up in front of him
 void rb_punt_after_ai(CInstance *player) {
+    if (player == P.qb) { P.qbx = px_x(player); P.qby = px_y(player); }   // where his pictures are drawn
     if (!P.flight && !P.roll) {
         if (player == P.ret && P.kick) rb_set_inst_real(player, SLOT_JFORCE, 0);   // he waits deep while you aim (free on a fake)
         return;
@@ -643,7 +694,58 @@ void rb_punt_after_ai(CInstance *player) {
 }
 
 // controller GUI step (where the CPU's punts and kicks are fired too): fire your punt once the flight is over
+typedef struct { double x, y, best; CInstance *who; } RetCtx;
+static int ret_cb(CInstance *inst, void *vc) {
+    RetCtx *c = vc;
+    double d = hypot(rb_get_builtin_real(inst, SLOT_X) - c->x, rb_get_builtin_real(inst, SLOT_Y) - c->y);
+    if (d < c->best) { c->best = d; c->who = inst; }
+    return 0;
+}
+static int kicked_cb(CInstance *inst, void *vc) {
+    if (rb_get_inst_real(inst, SLOT_VELOCITY) > 0.5) { *(CInstance **)vc = inst; return 1; }
+    return 0;
+}
+static double ko_carry(double v, double zv, double k) {
+    double t = 2 * k * zv / 0.08;                      // frames in the air
+    return t > 0 ? k * v * (1 - pow(0.986, t)) / 0.014 : 0;
+}
+static void ko_tick(CInstance *self, CInstance *other) {
+    if (R.st != R_KICK || !R.moved || !rb_obj_exists(OBJ_PLAYER) || !rb_obj_exists(OBJ_BALL)) return;
+    double land_x = km_x_of_yardline(R.land, R.goal_side);
+    if (R.scaled && !R.ret_moved && R.ret_x) {        // once it's kicked: your returner a little behind where it'll land
+        R.ret_moved = 1;
+        RetCtx c = { R.ret_x, 300, 1e9, 0 };
+        RValue pl = rb_obj_ref(OBJ_PLAYER);
+        rb_with(&pl, self, other, ret_cb, &c);
+        if (c.who && c.best < 40) {
+            double to = land_x + R.goal_side * RET_DEEP * KM_PX_PER_YD;
+            rb_set_builtin_real(c.who, SLOT_X, to);
+            rb_log("punt return: returner from x %.0f to %.0f", R.ret_x, to);
+        } else rb_log("punt return: returner not found near x %.0f (nearest %.0f px)", R.ret_x, c.best);
+    }
+    if (R.scaled) return;
+    CInstance *b = 0;
+    RValue bl = rb_obj_ref(OBJ_BALL);
+    rb_with(&bl, self, other, kicked_cb, &b);
+    if (!b) return;                                    // not kicked yet
+    R.scaled = 1;
+    double kp = rb_get_inst_real(b, SLOT_KICKPOW), v = rb_get_inst_real(b, SLOT_VELOCITY), zv = rb_get_inst_real(b, SLOT_ZVEL);
+    double bx = rb_get_builtin_real(b, SLOT_X), bounce = rb_get_inst_real(b, SLOT_BOUNCE_X);
+    double natural = KO_YDS * (kp > 1 ? (kp / KO_POW) * (kp / KO_POW) : 1), want = fabs(land_x - R.tee_x) / KM_PX_PER_YD;
+    // speed and lift both cut by k; with the air drag (x0.986 a frame, gravity 0.08, as offtools' hail_throw)
+    // the carry is D(k): solve D(k) / D(1) = want / natural
+    double d1 = ko_carry(v, zv, 1), goal = d1 * want / natural, lo = 0.3, hi = 1.3, k = 1;
+    for (int i = 0; i < 30; i++) { k = (lo + hi) / 2; if (ko_carry(v, zv, k) < goal) lo = k; else hi = k; }
+    rb_set_inst_real(b, SLOT_VELOCITY, v * k);
+    rb_set_inst_real(b, SLOT_ZVEL, zv * k);
+    double nb = bounce > -9000 && d1 > 0 ? bx + (bounce - bx) * ko_carry(v, zv, k) / d1 : bounce;
+    if (bounce > -9000) rb_set_inst_real(b, SLOT_BOUNCE_X, nb);
+    rb_log("punt return: kicked (kickpow %.2f, speed %.2f, lift %.2f, ball x %.0f, comes down x %.0f) - cut by %.2f for a %.0f-yd punt: comes down x %.0f (punt lands x %.0f)",
+           kp, v, zv, bx, bounce, k, want, nb, land_x);
+}
+
 void rb_punt_controller(CInstance *self, CInstance *other) {
+    ko_tick(self, other);
     hide_int_msg(self, other);                         // (also here: its Draw may come before the ball's next step)
     if (!P.fire) return;
     P.fire = 0;
