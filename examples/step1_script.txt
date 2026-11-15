@@ -106,8 +106,8 @@ on presnap
   screen_on = 1          # 1 = on, 0 = off
   screen_slip = 0.3      # seconds the back blocks before he slips out
   screen_block = 1.2     # seconds the line blocks before releasing to form the wall
-  screen_out = 5         # yards the back slips out toward the sideline
-  screen_behind = 2      # yards behind the line of scrimmage he sets up
+  screen_out = 3         # yards to the side of the QB the back sets up (3 = just outside the tackle)
+  screen_behind = 3      # yards behind the line of scrimmage he sets up
   screen_linemen = 3     # how many linemen release to form the wall
   screen_lead = 3        # after the catch, how many yards in front of him the blockers run
   screen_time = 5        # seconds after the snap the blockers keep helping
@@ -131,7 +131,12 @@ on snap
       scr_dy = -1
     end
     scr_bx = los_x() - fwd() * yard(screen_behind)
-    scr_by = max(field_top() + 20, min(field_bottom() - 20, back().y + scr_dy * yard(screen_out)))
+    # measured from the QB, not the back: from the back's own spot he ran a long diagonal to the sideline
+    scr_by = back().y
+    if qb() != nil
+      scr_by = qb().y
+    end
+    scr_by = max(field_top() + 20, min(field_bottom() - 20, scr_by + scr_dy * yard(screen_out)))
     log("s1: screen spot", scr_bx, scr_by, "out/wall at", screen_slip, screen_block)
   end
 end
