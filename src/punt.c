@@ -70,6 +70,8 @@
 #define KICK_DELAY        (3 * KICK1_EACH)   // the ball leaves his foot after the set-up frames
 static const long SPR_KICK1[3] = { 270, 268, 269 };   // normal, bulky, thin
 static const long SPR_KICK2[3] = { 273, 271, 272 };
+#define SPR_AIM_DOT       15                 // spr_aim: the dots of the aim line
+#define SLOT_HIDDEN       0x100fa5ce8ULL     // ball: hidden (a held ball isn't drawn)
 
 #define VA_S_ACTION_RESULT 0x1000f7200ULL
 #define CALLER_S_PUNT      0x1004cedacULL    // s_change_possession called from s_punt
@@ -103,6 +105,7 @@ static struct {
     int muffed;                // the muff happened (its message isn't hidden)
     unsigned kt, spr_swaps;    // frames since you let go (kicker pictures), pictures swapped
     unsigned aimf, diag_n; int diag_tag;   // frames in kick mode; the draw diagnostic's lines for its current frame
+    unsigned ball_draws, dots_hidden, rehidden; int mid_logged;   // proof the ball shows in the air and the aim line doesn't
     double qbx, qby;           // the punter's spot (his pictures are drawn there)
 } P;
 static void hide_int_msg(CInstance *self, CInstance *other);
@@ -250,6 +253,7 @@ static void catch_it(CInstance *ball, CInstance *other, int in_air) {
 
 static void land(CInstance *ball, CInstance *other) {
     seen_log("during the kick");
+    rb_log("punt: in the air the ball was drawn %u times, %u aim dots hidden, hidden again %u times", P.ball_draws, P.dots_hidden, P.rehidden);
     if (P.out) { finish(ball, P.real_lx, "out of bounds"); return; }
     if (P.tb) { finish(ball, P.real_lx, "into the end zone"); return; }
     double reach = P.ret ? dist_to(P.ret, P.lx, P.ly) / KM_PX_PER_YD : -1;
@@ -265,6 +269,7 @@ static void land(CInstance *ball, CInstance *other) {
 }
 
 static void roll_step(CInstance *ball, CInstance *other) {
+    rb_set_inst_real(ball, SLOT_HIDDEN, 0);            // still shown while it rolls
     P.rt++;
     P.rx += P.rdx; P.ry += P.rdy;
     double lim = 49 * KM_PX_PER_YD, vx = P.rx;        // on screen held short of the goal lines (a touchdown to the game)
@@ -586,6 +591,15 @@ int rb_punt_ball(CInstance *ball, CInstance *other) {
             rb_set_inst_real(ball, SLOT_HEIGHT, 3);
             return 1;
         }
+        if (!P.ft) {                                   // off his foot: the ball leaves from the punter, and shows
+            // The ball's Draw event skips a ball marked hidden (a held ball is: the QB's pictures carry it), and
+            // the punt never tells the game the ball was let go - v105 showed no ball in the air.
+            double was = rb_get_inst_real(ball, SLOT_HIDDEN);
+            if (P.qb) { P.sx = P.qbx; P.sy = P.qby; }
+            rb_log("punt: ball off the foot at x %.0f y %.0f - hidden was %g, now 0", P.sx, P.sy, was);
+        }
+        else if (rb_get_inst_real(ball, SLOT_HIDDEN) != 0) P.rehidden++;   // something hid it again since the last step
+        rb_set_inst_real(ball, SLOT_HIDDEN, 0);
         P.ft++;
         double p = (double)P.ft / P.fn;
         if (p > 1) p = 1;
@@ -679,7 +693,20 @@ static void draw_diag(CInstance *self, long sprite, float sub, float x, float y,
            self && self == P.qb ? (v >= 0 ? " (punter - swapped for the kicker's)" : " (punter)") : "");
 }
 long rb_punt_spr(CInstance *self, long sprite, float *sub, float x, float y, float *xs, float *ys, long colour, float rot, float alpha) {
+    if (g_done_ball && sprite == SPR_AIM_DOT) return -1;   // landed, the punt not fired yet: still no aim line
     if (!P.qb || !(P.kick || P.flight || P.roll)) return sprite;
+    if (P.flight || P.roll) {                          // let go: no aim line (the game still thinks you're aiming)
+        if (sprite == SPR_AIM_DOT) { P.dots_hidden++; return -1; }
+        if (P.ft && self && self == P.ball) {
+            P.ball_draws++;
+            if (!P.mid_logged && P.ft >= P.fn / 2) {    // one draw halfway up: where it is drawn vs where it flies
+                P.mid_logged = 1;
+                double p = (double)P.ft / P.fn;
+                rb_log("punt: ball drawn halfway - spr %ld at %.0f,%.0f (flight spot %.0f,%.0f, height %.0f)", sprite, x, y,
+                       P.sx + (P.lx - P.sx) * p, P.sy + (P.ly - P.sy) * p, 4 * P.peak * p * (1 - p) + 3);
+            }
+        }
+    }
     draw_diag(self, sprite, *sub, x, y, *xs, *ys, colour, rot, alpha);
     // his own drawings (the v104 log: the draw's instance is the player, steady from frame to frame);
     // a draw with no instance counts only when it is right on his spot

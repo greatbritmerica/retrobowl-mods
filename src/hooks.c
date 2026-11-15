@@ -409,7 +409,8 @@ long hook_spr_draw(CInstance *self, long sprite, long colour, float sub, float x
     rb_spr_calls++;
     rb_practice_tick(self);                                             // the week's practice pick (menus have no other per-frame hook)
     if (rb_off_spr_draw(sprite)) return 0;
-    sprite = rb_punt_spr(self, sprite, &sub, x, y, &xs, &ys, colour, rot, alpha);                         // the punter wears the kicker's pictures
+    sprite = rb_punt_spr(self, sprite, &sub, x, y, &xs, &ys, colour, rot, alpha);
+    if (sprite < 0) return 0;                                           // the punter wears the kicker's pictures; -1 = an aim dot after your punt
     if (!rb_cam3d_in_gui_pass && rb_cam3d_on && rb_cam3d_active())
         return rb_cam3d_spr_draw(orig, self, sprite, colour, sub, x, y, xs, ys, rot, alpha);
     return orig(self, sprite, colour, sub, x, y, xs, ys, rot, alpha);
