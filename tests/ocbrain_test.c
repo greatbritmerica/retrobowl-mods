@@ -54,6 +54,13 @@ int main(void) {
     c.surprise = 0.2; int n = 0;
     for (int i = 0; i < 10000; i++) { oc_pick(&b, OC_MID, 1, 1, &c, NONE, rnd, &why); n += why == OC_WHY_SURPRISE; }
     assert(n >= 1800 && n <= 2200);
+    // surprise_can_be_short: on 8+ to go a surprise may still be a hitch or slant, never an avoided route
+    int shorts = 0, av[7] = {0}; av[0] = 1;
+    for (int i = 0; i < 2000; i++) {
+        int s = oc_pick(&b, OC_MID, 1, 2, &c, av, rnd, &why);
+        if (why == OC_WHY_SURPRISE) { assert(s != 0); shorts += s == 1; }
+    }
+    assert(shorts > 0);
     c = ctx0();
 
     // keep_rate

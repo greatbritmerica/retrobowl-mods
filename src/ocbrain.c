@@ -29,9 +29,12 @@ int oc_pick(const OcBrain *b, int pos, int side, int sit, const OcCtx *c, const 
         }
     double x = rnd();
     if (x < c->keep) { *why = OC_WHY_KEEP; return OC_KEEP; }
-    if (x < c->keep + c->surprise) {
+    if (x < c->keep + c->surprise) {                   // a surprise may be a short route even on 8+ to go
         *why = OC_WHY_SURPRISE;
-        int k = (int)(rnd() * n); return allowed[k < n ? k : n - 1];
+        int any[6], m = 0;
+        for (int r = 0; r < 6; r++) if (!used[r]) any[m++] = r;
+        const int *from = m ? any : allowed; int cnt = m ? m : n;
+        int k = (int)(rnd() * cnt); return from[k < cnt ? k : cnt - 1];
     }
     int best = allowed[0]; double bs = -1e9, mean_pen = 0, pen[6], best_pen = 0;
     for (int i = 0; i < n; i++) {

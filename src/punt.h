@@ -16,4 +16,4 @@ int  rb_punt_armed(void);                                     // 1 = the coming/
 void rb_punt_arm(int on);                                     // the pre-snap Punt button
 int  rb_punt_flying(void);                                    // 1 = your punt is in the air (or waiting to fire): nobody touches the ball
 int  rb_punt_play(void);                                      // 1 = this play of yours is a punt play (no pump fake / super tap)
-long rb_punt_spr(CInstance *self, long sprite, float *sub, float x, float y);   // a picture about to be drawn: the punter wears the kicker's
+long rb_punt_spr(CInstance *self, long sprite, float *sub, float x, float y, float *xs, float *ys, long colour, float rot, float alpha);   // a picture about to be drawn: the punter wears the kicker's

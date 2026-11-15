@@ -515,44 +515,83 @@ end
 
 # ============================================================
 # 7. BACK SPY
-# While your QB has the ball the CPU's linebacker nearest your back follows him
-# instead of dropping deep with everyone else. When you throw to the back
-# (Extreme: the game tells where the ball comes down), the defenders nearest
-# the catch break on it. (Not on your own Screen calls.)
+# Once your back has left his spot and your QB still has the ball, ONE linebacker
+# (the one nearest the back at that moment) follows him for a short while, then
+# goes back to his normal job. He lets go at once on a throw, handoff or scramble.
+# When you throw to the back (Extreme: the game tells where the ball comes down),
+# the defenders nearest the catch break on it. (Not on your own Screen calls.)
+# The log says "s1: spy on" / "s1: spy off" so a test shows when it ran.
 # ============================================================
 
 on presnap
   # --- Back spy: change these ---
   spy_on = 1             # 1 = on, 0 = off
   spy_depth = 2          # yards past the line a defender must be to spy (linebackers, not the pass rush)
+  spy_release = 2        # yards the back must move from where he lined up before a spy goes with him
+  spy_time = 1.5         # seconds the spy follows him, at most
   spy_lead = 1           # yards in front of the back the spy aims for
   spy_break = 2          # how many defenders break on a throw to the back
   spy_reach = 3          # a throw coming down within this many yards of the back counts as his
+  spy_t = -1             # (not a setting) when the spy started: -1 not yet, 99 done
+end
+
+on snap
+  spy_t = -1
+  spy_bx = 0
+  spy_by = 0
+  if back() != nil
+    spy_bx = back().x
+    spy_by = back().y
+  end
 end
 
 on frame
-  if spy_on and not scr_ready and back() != nil and since_snap() > 0.3 and since_snap() < 6
+  if spy_on and not scr_ready and back() != nil and since_snap() > 0.3
     if state() == 1 or state() == 2
-      # the QB still has it: the spy follows the back
-      tx = 0
-      ty = 99999
-      for p in defenders()
-        if (p.x - los_x()) * fwd() > yard(spy_depth)
-          n = dist(p.x, p.y, back().x, back().y)
-          if n < ty
-            ty = n
-            tx = p
+      if spy_t < 0 and dist(back().x, back().y, spy_bx, spy_by) > yard(spy_release)
+        # the back has released: the linebacker nearest him becomes the spy
+        tx = nil
+        ty = 99999
+        for p in defenders()
+          if (p.x - los_x()) * fwd() > yard(spy_depth)
+            n = dist(p.x, p.y, back().x, back().y)
+            if n < ty
+              ty = n
+              tx = p
+            end
+          end
+        end
+        if tx != nil
+          spy_t = since_snap()
+          spy_sx = tx.x
+          spy_sy = tx.y
+          log("s1: spy on", since_snap(), ty / yard(1))
+        end
+      elif spy_t >= 0 and spy_t < 99
+        if since_snap() - spy_t > spy_time
+          spy_t = 99
+          log("s1: spy off - time up", since_snap())
+        else
+          # the same man as last frame: whoever stands where the spy just was
+          tx = item(nearest(defenders(), spy_sx, spy_sy, 1), 0)
+          if tx != nil
+            steer(tx, back().x + fwd() * yard(spy_lead), back().y, 1)
+            spy_sx = tx.x
+            spy_sy = tx.y
           end
         end
       end
-      if ty < 99999
-        steer(tx, back().x + fwd() * yard(spy_lead), back().y, 1)
+    else
+      if spy_t >= 0 and spy_t < 99
+        spy_t = 99
+        log("s1: spy off - ball out, state", state(), since_snap())
       end
-    elif state() == 3 and landing_x() != nil
-      # a throw to the back: the nearest defenders break on where it comes down
-      if dist(landing_x(), landing_y(), back().x, back().y) < yard(spy_reach)
-        for p in nearest(defenders(), landing_x(), landing_y(), spy_break)
-          steer(p, landing_x(), landing_y(), 1)
+      if state() == 3 and landing_x() != nil
+        # a throw to the back: the nearest defenders break on where it comes down
+        if dist(landing_x(), landing_y(), back().x, back().y) < yard(spy_reach)
+          for p in nearest(defenders(), landing_x(), landing_y(), spy_break)
+            steer(p, landing_x(), landing_y(), 1)
+          end
         end
       end
     end

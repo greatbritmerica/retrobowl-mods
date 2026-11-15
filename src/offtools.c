@@ -289,7 +289,7 @@ static int apply_route(CInstance *rcv, const char *route, const char *name, cons
 // Before your snap on Extreme it rewrites the receivers' routes from what worked, away from the zones
 // the CPU defense knows, and learns from each pass (rb_off_oc_lesson, called by dbrain.c).
 extern CInstance *rb_game_controller;                   // cpuqb.c: a new one = a new game
-static OcBrain g_oc; static OcTable g_oct; static int g_oc_loaded, g_oc_sit, g_oc_last[3] = { -1, -1, -1 };   // g_oc_last: last play's call per position
+static OcBrain g_oc; static OcTable g_oct; static int g_oc_loaded, g_oc_sit, g_oc_last[3] = { -1, -1, -1 }, g_oc_prev[3] = { -1, -1, -1 };   // last two plays' calls per position
 static CInstance *g_oc_game, *g_oc_off_game;
 static double oc_rnd(void) { return arc4random_uniform(1000000) / 1000000.0; }
 static void oc_path(char *b, int n) { const char *h = getenv("HOME"); snprintf(b, n, "%s/Documents/rbmod_ocbrain.txt", h ? h : "."); }
@@ -326,13 +326,14 @@ static void oc_call(void) {
         int pos = k == 0 ? OC_TOP : k == n - 1 ? OC_BOT : OC_MID;
         double side_px = (O.rcv_y[idx[k]] - O.qby) * (O.fwd > 0 ? 1 : -1);          // as dbrain.c's zones
         int side = side_px < -60 ? 0 : side_px > 60 ? 2 : 1, why = 0;
-        int avoid[7]; memcpy(avoid, used, sizeof avoid);                            // no repeat of this spot's last call
+        int avoid[7]; memcpy(avoid, used, sizeof avoid);                            // no repeat of this spot's last two calls
         if (g_oc_last[pos] >= 0 && g_oc_last[pos] < NROUTES) avoid[g_oc_last[pos]] = 1;
+        if (g_oc_prev[pos] >= 0 && g_oc_prev[pos] < NROUTES) avoid[g_oc_prev[pos]] = 1;
         int route = oc_pick(&g_oc, pos, side, g_oc_sit, &c, avoid, oc_rnd, &why);
         double vanilla = rb_get_inst_real(r, SLOT_MY_ROUTE);
         if (route != OC_KEEP && !apply_route(r, ROUTES[route].route, ROUTES[route].name, OC_POS[pos])) { route = OC_KEEP; why = OC_WHY_KEEP; }
         used[route] = 1;
-        g_oc_last[pos] = route == OC_KEEP ? -1 : route;
+        g_oc_prev[pos] = g_oc_last[pos]; g_oc_last[pos] = route == OC_KEEP ? -1 : route;
         oc_table_set(&g_oct, r, route, pos);
         rb_log("ocbrain: call %s %s zone %d (%s) vanilla path %g", OC_POS[pos], route == OC_KEEP ? "keep" : ROUTES[route].name,
                oc_zone(route, side), OC_WHY[why], vanilla);
